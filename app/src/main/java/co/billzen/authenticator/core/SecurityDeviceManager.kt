@@ -32,24 +32,10 @@ sealed class DeviceBindingValidationResult {
     data class NetworkError(val reason: String) : DeviceBindingValidationResult()
 }
 
-/**
- * Gestor de Seguridad de Sesión Única por Hardware (Device Binding).
- *
- * Responsabilidades:
- * 1. Generar una única vez un UUID v4 criptográfico que identifica esta instalación/dispositivo.
- * 2. Almacenarlo cifrado con AES-256-GCM respaldado por el chip de hardware `AndroidKeyStore`
- *    (equivalente moderno y sin deprecación a `EncryptedSharedPreferences`).
- * 3. Construir el Payload JSON firmado con metadatos del dispositivo y validar contra el servidor
- *    si la sesión es legítima o si fue rechazada con HTTP 403 (otra sesión activa).
- */
 class SecurityDeviceManager(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
 
-    /**
-     * Obtiene el UUID único del dispositivo desencriptándolo desde almacenamiento seguro,
-     * o genera uno nuevo en el primer arranque y lo persiste cifrado con AndroidKeyStore.
-     */
     @Synchronized
     fun getOrCreateBoundDeviceUuid(): String {
         val existingEncrypted = prefs.getString(KEY_ENCRYPTED_DEVICE_UUID, null)
@@ -66,11 +52,6 @@ class SecurityDeviceManager(context: Context) {
         prefs.edit().putString(KEY_ENCRYPTED_DEVICE_UUID, encrypted).apply()
         return freshUuid
     }
-
-    /**
-     * Construye el Payload JSON estandarizado que se envía en cada petición crítica al backend
-     * de BillZen (`bill_zen_users` / API FastAPI) para verificar el Device Binding.
-     */
     fun buildDeviceBindingPayload(nit: String): JSONObject {
         val deviceUuid = getOrCreateBoundDeviceUuid()
         return JSONObject().apply {
@@ -82,12 +63,6 @@ class SecurityDeviceManager(context: Context) {
         }
     }
 
-    /**
-     * Envía el Payload de validación al endpoint del backend y evalúa si el dispositivo
-     * está autorizado (HTTP 200) o bloqueado por sesión activa en otro equipo (HTTP 403).
-     *
-     * Debe invocarse desde una corrutina en `Dispatchers.IO`.
-     */
     fun validateSessionWithServer(
         endpointUrl: String,
         nit: String,
