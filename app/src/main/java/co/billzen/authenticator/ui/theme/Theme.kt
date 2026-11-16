@@ -1,28 +1,33 @@
 package co.billzen.authenticator.ui.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val BillZenColorScheme = darkColorScheme(
+private val BillZenErpLightColorScheme = lightColorScheme(
     primary = BillZenEmerald,
     onPrimary = Color.White,
-    secondary = BillZenMint,
+    secondary = BillZenGold,
     onSecondary = BillZenDark,
-    background = BillZenDark,
-    onBackground = BillZenTextPrimary,
-    surface = BillZenSurface,
-    onSurface = BillZenTextPrimary,
+    tertiary = BillZenMint,
+    background = BillZenCream,
+    onBackground = BillZenDark,
+    surface = BillZenWhiteCard,
+    onSurface = BillZenDark,
+    surfaceVariant = BillZenCream,
+    onSurfaceVariant = BillZenTextSecondary,
+    outline = BillZenLightBorder,
     error = BillZenError,
+    onError = Color.White
 )
 @Composable
 fun BillzenAuntenticatorTheme(
-    content:@Composable () -> Unit
+    content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = BillZenColorScheme,
+        colorScheme = BillZenErpLightColorScheme,
         typography = Typography,
-        content = content,
+        content = content
     )
 }

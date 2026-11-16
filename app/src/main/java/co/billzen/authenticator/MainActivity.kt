@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -40,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -61,11 +66,13 @@ import androidx.compose.ui.unit.sp
 import co.billzen.authenticator.core.Base32
 import co.billzen.authenticator.core.OtpAuthParser
 import co.billzen.authenticator.core.SecureAccountStore
+import co.billzen.authenticator.core.SecurityDeviceManager
 import co.billzen.authenticator.core.TotpAccount
 import co.billzen.authenticator.core.TotpGenerator
 import co.billzen.authenticator.ui.theme.BillZenAmber
 import co.billzen.authenticator.ui.theme.BillZenBorder
 import co.billzen.authenticator.ui.theme.BillZenCard
+import co.billzen.authenticator.ui.theme.BillZenCream
 import co.billzen.authenticator.ui.theme.BillZenDark
 import co.billzen.authenticator.ui.theme.BillZenEmerald
 import co.billzen.authenticator.ui.theme.BillZenError
@@ -74,14 +81,18 @@ import co.billzen.authenticator.ui.theme.BillZenMint
 import co.billzen.authenticator.ui.theme.BillZenSurface
 import co.billzen.authenticator.ui.theme.BillZenTextPrimary
 import co.billzen.authenticator.ui.theme.BillZenTextSecondary
+import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 import co.billzen.authenticator.ui.theme.BillzenAuntenticatorTheme
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+
+    private val erpViewModel: ErpViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Bloquea capturas y grabaciones de pantalla por seguridad 2FA
+        // Bloquea capturas y grabaciones de pantalla sobre información financiera y tokens 2FA
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
@@ -92,83 +103,140 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BillzenAuntenticatorTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = BillZenTextPrimary
-                ) { innerPadding ->
-                    BillZenHomeScreen(
-                        accountStore = accountStore,
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
+                BillZenRootFlow(
+                    viewModel = erpViewModel,
+                    accountStore = accountStore
+                )
             }
         }
     }
 }
 
+/**
+ * Flujo Raíz de BillZen Mobile ERP:
+ * 1. Si NO hay ninguna empresa vinculada (`accounts.isEmpty()`), muestra exclusivamente la
+ *    pantalla inicial pidiendo escanear el código QR de BillzenERP de escritorio.
+ * 2. Apenas el usuario escanea el QR (o vincula su empresa), se cierra el apartado inicial
+ *    y se despliega automáticamente toda la interfaz de Administrador (Dashboard, Contabilidad y Token 2FA).
+ */
 @Composable
-fun BillZenHomeScreen(
-    accountStore: SecureAccountStore? = null,
-    modifier: Modifier = Modifier
+fun BillZenRootFlow(
+    viewModel: ErpViewModel,
+    accountStore: SecureAccountStore? = null
 ) {
     val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsState()
+
     var accounts by remember { mutableStateOf(accountStore?.getAccounts() ?: emptyList()) }
-    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showManualDialog by remember { mutableStateOf(false) }
     var accountPendingDelete by remember { mutableStateOf<TotpAccount?>(null) }
 
+    // UUID único de sesión vinculada al hardware (Device Binding)
+    val deviceUuidShort = remember {
+        SecurityDeviceManager(context).getOrCreateBoundDeviceUuid().take(8).uppercase()
+    }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            currentTimeMillis = System.currentTimeMillis()
-            delay(200L)
+    // Sincroniza el nombre y NIT de la empresa principal con el Dashboard
+    val primaryAccount = accounts.firstOrNull()
+    LaunchedEffect(primaryAccount) {
+        if (primaryAccount != null) {
+            viewModel.syncLinkedCompany(
+                companyName = primaryAccount.companyName,
+                nit = primaryAccount.nit
+            )
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp)
-    ) {
-        BillZenHeader(
-            hasAccounts = accounts.isNotEmpty(),
-            onScanQrClick = { showQrScanner = true },
-            onManualAddClick = { showManualDialog = true }
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        if (accounts.isEmpty()) {
-            EmptyAccountsCard(
-                onScanQrClick = { showQrScanner = true },
-                onManualLinkClick = { showManualDialog = true },
-                onLoadDemoClick = {
-                    val demoAccount = TotpAccount(
-                        nit = "900.123.456-7",
-                        companyName = "ZenTech Solutions S.A.S.",
-                        secret = "JBSWY3DPEHPK3PXP"
-                    )
-                    accounts = accountStore?.saveAccount(demoAccount) ?: listOf(demoAccount)
-                    Toast.makeText(context, "Empresa de prueba vinculada", Toast.LENGTH_SHORT).show()
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = BillZenCream,
+        bottomBar = {
+            // La barra de navegación solo aparece cuando la empresa ya fue vinculada
+            if (accounts.isNotEmpty()) {
+                NavigationBar(
+                    containerColor = BillZenWhiteCard,
+                    contentColor = BillZenDark
+                ) {
+                    ErpSection.entries.forEach { section ->
+                        val isSelected = uiState.selectedSection == section
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = { viewModel.selectSection(section) },
+                            icon = {
+                                Text(
+                                    text = section.iconSymbol,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = section.title,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = BillZenEmerald,
+                                selectedTextColor = BillZenEmerald,
+                                indicatorColor = BillZenEmerald.copy(alpha = 0.14f),
+                                unselectedIconColor = BillZenTextSecondary,
+                                unselectedTextColor = BillZenTextSecondary
+                            )
+                        )
+                    }
                 }
-            )
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(accounts, key = { it.nit }) { account ->
-                    TotpAccountCard(
-                        account = account,
-                        currentTimeMillis = currentTimeMillis,
-                        onCopyCode = { code ->
-                            copySensitiveCode(context, code)
-                        },
-                        onDeleteRequest = {
-                            accountPendingDelete = account
-                        }
-                    )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            if (accounts.isEmpty()) {
+                // ESTADO 1: Puerta de vinculación inicial (Pide escanear el QR de BillzenERP)
+                InitialQrOnboardingScreen(
+                    onScanQrClick = { showQrScanner = true },
+                    onManualLinkClick = { showManualDialog = true },
+                    onLoadDemoClick = {
+                        val demoAccount = TotpAccount(
+                            nit = "900.123.456-7",
+                            companyName = "ZenTech Solutions S.A.S.",
+                            secret = "JBSWY3DPEHPK3PXP"
+                        )
+                        accounts = accountStore?.saveAccount(demoAccount) ?: listOf(demoAccount)
+                        viewModel.selectSection(ErpSection.DASHBOARD)
+                        Toast.makeText(
+                            context,
+                            "Empresa vinculada. Bienvenido al Panel de Administrador.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            } else {
+                // ESTADO 2: Interfaz completa de Administrador del negocio
+                when (uiState.selectedSection) {
+                    ErpSection.DASHBOARD -> {
+                        DashboardScreen(
+                            uiState = uiState,
+                            deviceUuidShort = deviceUuidShort
+                        )
+                    }
+                    ErpSection.ACCOUNTING -> {
+                        AccountingScreen(
+                            summary = uiState.accountingSummary,
+                            expenses = uiState.expenses
+                        )
+                    }
+                    ErpSection.TOKEN_2FA -> {
+                        SecurityTokenSectionScreen(
+                            accounts = accounts,
+                            onScanQrClick = { showQrScanner = true },
+                            onManualAddClick = { showManualDialog = true },
+                            onCopyCode = { code -> copySensitiveCode(context, code) },
+                            onDeleteRequest = { target -> accountPendingDelete = target }
+                        )
+                    }
                 }
             }
         }
@@ -186,15 +254,16 @@ fun BillZenHomeScreen(
                     val parsedAccount = OtpAuthParser.parse(rawQr)
                     accounts = accountStore?.saveAccount(parsedAccount) ?: (accounts + parsedAccount)
                     showQrScanner = false
+                    viewModel.selectSection(ErpSection.DASHBOARD)
                     Toast.makeText(
                         context,
-                        "NIT ${parsedAccount.nit} vinculado por QR",
+                        "NIT ${parsedAccount.nit} vinculado. Abriendo BillZen ERP...",
                         Toast.LENGTH_SHORT
                     ).show()
                 } catch (e: IllegalArgumentException) {
                     Toast.makeText(
                         context,
-                        e.message ?: "El código QR no es válido para BillZen 2FA",
+                        e.message ?: "El código QR no es válido para BillZen ERP",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -208,6 +277,7 @@ fun BillZenHomeScreen(
             onSaveAccount = { newAccount ->
                 accounts = accountStore?.saveAccount(newAccount) ?: (accounts + newAccount)
                 showManualDialog = false
+                viewModel.selectSection(ErpSection.DASHBOARD)
                 Toast.makeText(
                     context,
                     "NIT ${newAccount.nit} vinculado correctamente",
@@ -225,22 +295,135 @@ fun BillZenHomeScreen(
                 accounts = accountStore?.removeAccount(target.nit)
                     ?: accounts.filterNot { it.nit == target.nit }
                 accountPendingDelete = null
-                Toast.makeText(context, "Empresa desvinculada", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Empresa desvinculada del dispositivo", Toast.LENGTH_SHORT).show()
             }
         )
     }
 }
 
+/**
+ * Pantalla inicial que ve el cliente recién abre la aplicación.
+ * Solicita escanear el código QR de BillzenERP de escritorio para desbloquear Billzen móvil.
+ */
 @Composable
-fun BillZenHeader(
-    hasAccounts: Boolean = false,
-    onScanQrClick: () -> Unit = {},
-    onManualAddClick: () -> Unit = {}
+fun InitialQrOnboardingScreen(
+    onScanQrClick: () -> Unit,
+    onManualLinkClick: () -> Unit,
+    onLoadDemoClick: () -> Unit
 ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    ) {
+        BillZenLogoHeader()
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        EmptyAccountsCard(
+            onScanQrClick = onScanQrClick,
+            onManualLinkClick = onManualLinkClick,
+            onLoadDemoClick = onLoadDemoClick
+        )
+    }
+}
+
+@Composable
+fun SecurityTokenSectionScreen(
+    accounts: List<TotpAccount>,
+    onScanQrClick: () -> Unit,
+    onManualAddClick: () -> Unit,
+    onCopyCode: (String) -> Unit,
+    onDeleteRequest: (TotpAccount) -> Unit
+) {
+    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentTimeMillis = System.currentTimeMillis()
+            delay(200L)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Autenticador 2FA",
+                    color = BillZenDark,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Códigos de acceso para BillZen ERP Escritorio",
+                    color = BillZenTextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+
+            Button(
+                onClick = onScanQrClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BillZenEmerald,
+                    contentColor = BillZenTextPrimary
+                ),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text(
+                    text = "Escanear QR",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(accounts, key = { it.nit }) { account ->
+                TotpAccountCard(
+                    account = account,
+                    currentTimeMillis = currentTimeMillis,
+                    onCopyCode = onCopyCode,
+                    onDeleteRequest = { onDeleteRequest(account) }
+                )
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = onManualAddClick,
+                    border = BorderStroke(1.dp, BillZenDark),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "+ Vincular otro NIT manualmente",
+                        color = BillZenDark,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BillZenLogoHeader() {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = buildAnnotatedString {
@@ -261,46 +444,13 @@ fun BillZenHeader(
                         fontFamily = FontFamily.Serif
                     )
                 ) {
-                    append("zen")
+                    append("Zen")
                 }
             },
             fontSize = 28.sp
         )
-
-        if (hasAccounts) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onManualAddClick,
-                    border = BorderStroke(1.dp, BillZenDark),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text(
-                        text = "+ Clave",
-                        color = BillZenDark,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Button(
-                    onClick = onScanQrClick,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BillZenEmerald,
-                        contentColor = BillZenTextPrimary
-                    ),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text(
-                        text = "Escanear QR",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
     }
 }
-
 @Composable
 fun EmptyAccountsCard(
     onScanQrClick: () -> Unit = {},
@@ -318,7 +468,7 @@ fun EmptyAccountsCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "TU PORTABILIDAD A LA MANO",
+                text = "Conecta tu empresa con BillZen ERP",
                 color = BillZenTextPrimary,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
@@ -328,8 +478,8 @@ fun EmptyAccountsCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Escanea el código QR mostrado en BillZen ERP",
-                color = BillZenTextSecondary,
+                text = "Escanea el código QR mostrado en la aplicación de escritorio BillZen ERP para vincular tu NIT, activar tu sesión única de Administrador y acceder al Dashboard Financiero y Token 2FA.",
+                color = BillZenTextPrimary.copy(alpha = 0.78f),
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
                 textAlign = TextAlign.Center
@@ -374,7 +524,7 @@ fun EmptyAccountsCard(
 
             TextButton(onClick = onLoadDemoClick) {
                 Text(
-                    text = "Cargar empresa demo (RFC 6238)",
+                    text = "Simular vinculación QR (Abrir vista Administrador)",
                     color = BillZenGold,
                     fontSize = 12.sp
                 )
@@ -464,7 +614,6 @@ fun TotpAccountCard(
                     letterSpacing = 2.sp
                 )
 
-                // Anillo de cuenta regresiva de 30s
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.size(48.dp)
@@ -489,12 +638,13 @@ fun TotpAccountCard(
 
             Text(
                 text = "Toca la tarjeta para copiar el código",
-                color = BillZenTextSecondary,
+                color = BillZenTextPrimary.copy(alpha = 0.65f),
                 fontSize = 11.sp
             )
         }
     }
 }
+
 @Composable
 fun AddAccountDialog(
     onDismiss: () -> Unit,
@@ -511,14 +661,14 @@ fun AddAccountDialog(
         focusedBorderColor = BillZenMint,
         unfocusedBorderColor = BillZenBorder,
         focusedLabelColor = BillZenMint,
-        unfocusedLabelColor = BillZenTextSecondary
+        unfocusedLabelColor = BillZenTextPrimary.copy(alpha = 0.7f)
     )
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = BillZenSurface,
         titleContentColor = BillZenTextPrimary,
-        textContentColor = BillZenTextSecondary,
+        textContentColor = BillZenTextPrimary,
         title = {
             Text(
                 text = "Vincular empresa manualmente",
@@ -531,7 +681,7 @@ fun AddAccountDialog(
                 Text(
                     text = "Pega la URI otpauth:// generada por el ERP o escribe los datos manualmente:",
                     fontSize = 13.sp,
-                    color = BillZenTextSecondary
+                    color = BillZenTextPrimary.copy(alpha = 0.8f)
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -618,7 +768,7 @@ fun AddAccountDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancelar", color = BillZenTextSecondary)
+                Text("Cancelar", color = BillZenTextPrimary.copy(alpha = 0.7f))
             }
         }
     )
@@ -634,7 +784,7 @@ fun DeleteConfirmDialog(
         onDismissRequest = onDismiss,
         containerColor = BillZenSurface,
         titleContentColor = BillZenTextPrimary,
-        textContentColor = BillZenTextSecondary,
+        textContentColor = BillZenTextPrimary,
         title = {
             Text(
                 text = "¿Desvincular empresa?",
@@ -643,7 +793,7 @@ fun DeleteConfirmDialog(
         },
         text = {
             Text(
-                text = "Se eliminará la semilla 2FA de ${account.companyName} (NIT ${account.nit}) de este dispositivo. Para volver a iniciar sesión necesitarás vincularla nuevamente."
+                text = "Se cerrará la sesión de Administrador de ${account.companyName} (NIT ${account.nit}) y se eliminará la semilla 2FA de este dispositivo."
             )
         },
         confirmButton = {
@@ -659,7 +809,7 @@ fun DeleteConfirmDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancelar", color = BillZenTextSecondary)
+                Text("Cancelar", color = BillZenTextPrimary.copy(alpha = 0.7f))
             }
         }
     )
@@ -679,13 +829,8 @@ private fun copySensitiveCode(context: Context, code: String) {
 
 @Preview(showBackground = true)
 @Composable
-fun BillZenHomePreview() {
+fun BillZenOnboardingPreview() {
     BillzenAuntenticatorTheme {
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = BillZenTextPrimary
-        ) { innerPadding ->
-            BillZenHomeScreen(modifier = Modifier.padding(innerPadding))
-        }
+        BillZenRootFlow(viewModel = ErpViewModel())
     }
 }
