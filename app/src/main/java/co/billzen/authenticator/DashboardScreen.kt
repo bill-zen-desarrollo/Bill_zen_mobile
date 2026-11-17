@@ -33,6 +33,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,7 +42,6 @@ import co.billzen.authenticator.ui.theme.BillZenEmerald
 import co.billzen.authenticator.ui.theme.BillZenError
 import co.billzen.authenticator.ui.theme.BillZenGold
 import co.billzen.authenticator.ui.theme.BillZenLightBorder
-import co.billzen.authenticator.ui.theme.BillZenMint
 import co.billzen.authenticator.ui.theme.BillZenTextSecondary
 import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 
@@ -115,12 +115,12 @@ private fun DashboardTopBar(
     companyNit: String,
     deviceUuidShort: String
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = buildAnnotatedString {
                     withStyle(
@@ -140,34 +140,41 @@ private fun DashboardTopBar(
                             fontFamily = FontFamily.Serif
                         )
                     ) {
-                        append("zen")
+                        append("Zen")
                     }
                 },
                 fontSize = 28.sp
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "Hola, $adminName · NIT $companyNit",
-                color = BillZenTextSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
+
+            // Insignia ejecutiva compacta en una sola línea horizontal
+            Surface(
+                color = BillZenEmerald.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, BillZenEmerald.copy(alpha = 0.35f))
+            ) {
+                Text(
+                    text = if (companyNit.isNotBlank()) "NIT: $companyNit" else "ID: $deviceUuidShort",
+                    color = BillZenEmerald,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
         }
 
-        // Insignia de Sesión Única Vinculada
-        Surface(
-            color = BillZenEmerald.copy(alpha = 0.12f),
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(1.dp, BillZenEmerald.copy(alpha = 0.35f))
-        ) {
-            Text(
-                text = "ID: $deviceUuidShort",
-                color = BillZenEmerald,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-            )
-        }
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = "Hola, $adminName",
+            color = BillZenTextSecondary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -187,7 +194,9 @@ private fun KpiMetricCard(metric: KpiMetric) {
                 text = metric.title,
                 color = BillZenTextSecondary,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -195,8 +204,11 @@ private fun KpiMetricCard(metric: KpiMetric) {
             Text(
                 text = metric.formattedValue,
                 color = BillZenDark,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -210,6 +222,8 @@ private fun KpiMetricCard(metric: KpiMetric) {
                     color = trendColor,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }

@@ -10,10 +10,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-enum class ErpSection(val title: String, val iconSymbol: String) {
-    DASHBOARD("Dashboard", "📊"),
-    ACCOUNTING("Contabilidad", "📑"),
-    TOKEN_2FA("Token 2FA", "🔐")
+enum class ErpSection(val title: String) {
+    DASHBOARD("Dashboard"),
+    ACCOUNTING("Contabilidad"),
+    TOKEN_2FA("Autenticador")
 }
 data class KpiMetric(
     val title: String,
