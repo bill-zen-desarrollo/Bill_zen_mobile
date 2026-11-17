@@ -1,15 +1,16 @@
 package co.billzen.authenticator
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.ContextWrapper
 import android.os.Build
 import android.os.Bundle
 import android.os.PersistableBundle
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -75,7 +76,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -100,9 +100,11 @@ import co.billzen.authenticator.ui.theme.BillZenTextPrimary
 import co.billzen.authenticator.ui.theme.BillZenTextSecondary
 import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 import co.billzen.authenticator.ui.theme.BillzenAuntenticatorTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
-class MainActivity : FragmentActivity() {
+class MainActivity : ComponentActivity() {
 
     private val erpViewModel: ErpViewModel by viewModels()
 
@@ -148,12 +150,30 @@ fun BillZenRootFlow(
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsState()
 
-    var accounts by remember { mutableStateOf(accountStore?.getAccounts() ?: emptyList()) }
+    var accounts by remember { mutableStateOf<List<TotpAccount>>(emptyList()) }
+    var isInitialLoadDone by remember { mutableStateOf(false) }
+    var deviceUuidShort by remember { mutableStateOf("--------") }
     var isSessionUnlocked by remember { mutableStateOf(false) }
     var shouldAutoTriggerBiometric by remember { mutableStateOf(true) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showManualDialog by remember { mutableStateOf(false) }
     var accountPendingDelete by remember { mutableStateOf<TotpAccount?>(null) }
+
+    // Carga asíncrona en Dispatchers.IO después del primer fotograma para liberar el Splash Screen en <16 ms
+    LaunchedEffect(Unit) {
+        val (loadedAccounts, loadedUuidShort) = withContext(Dispatchers.IO) {
+            val storedAccounts = accountStore?.getAccounts() ?: emptyList()
+            val shortUuid = try {
+                SecurityDeviceManager(context).getOrCreateBoundDeviceUuid().take(8).uppercase()
+            } catch (_: Exception) {
+                "--------"
+            }
+            storedAccounts to shortUuid
+        }
+        accounts = loadedAccounts
+        deviceUuidShort = loadedUuidShort
+        isInitialLoadDone = true
+    }
 
     // Bloquea automáticamente la sesión cada vez que la aplicación pasa a segundo plano o se apaga la pantalla
     DisposableEffect(lifecycleOwner, accounts.isNotEmpty()) {
@@ -167,11 +187,6 @@ fun BillZenRootFlow(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
-    }
-
-    // UUID único de sesión vinculada al hardware (Device Binding)
-    val deviceUuidShort = remember {
-        SecurityDeviceManager(context).getOrCreateBoundDeviceUuid().take(8).uppercase()
     }
 
     // Sincroniza el nombre y NIT de la empresa principal con el Dashboard
@@ -190,7 +205,7 @@ fun BillZenRootFlow(
         containerColor = BillZenCream,
         bottomBar = {
             // La barra de navegación solo aparece cuando la empresa fue vinculada y la sesión está desbloqueada
-            if (accounts.isNotEmpty() && isSessionUnlocked) {
+            if (isInitialLoadDone && accounts.isNotEmpty() && isSessionUnlocked) {
                 NavigationBar(
                     containerColor = BillZenWhiteCard,
                     contentColor = BillZenDark
@@ -233,7 +248,16 @@ fun BillZenRootFlow(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (accounts.isEmpty()) {
+            if (!isInitialLoadDone) {
+                // Primer fotograma ultraligero mientras Dispatchers.IO lee AndroidKeyStore
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                ) {
+                    BillZenLogoHeader()
+                }
+            } else if (accounts.isEmpty()) {
                 // ESTADO 1: Puerta de vinculación inicial (Pide escanear el QR de BillzenERP)
                 InitialQrOnboardingScreen(
                     onScanQrClick = { showQrScanner = true },
@@ -312,10 +336,10 @@ fun BillZenRootFlow(
                         "NIT ${parsedAccount.nit} vinculado. Abriendo BillZen ERP...",
                         Toast.LENGTH_SHORT
                     ).show()
-                } catch (e: IllegalArgumentException) {
+                } catch (_: IllegalArgumentException) {
                     Toast.makeText(
                         context,
-                        e.message ?: "El código QR no es válido para BillZen ERP",
+                        "Este código QR no pertenece a BillZen ERP.",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -360,7 +384,7 @@ fun BillZenRootFlow(
 
 /**
  * Pantalla de bloqueo biométrico corporativo para proteger el acceso a la sesión de Administrador.
- * Dispara automáticamente el diálogo `BiometricPrompt` al entrar en primer plano (`ON_RESUME`)
+ * Dispara automáticamente el diálogo `BiometricPrompt` tras renderizar la vista (`delay(250L)`)
  * y ofrece un método de respaldo controlado cuando el dispositivo o emulador no tiene huella/PIN configurado.
  */
 @Composable
@@ -372,11 +396,9 @@ fun BiometricLockScreen(
     onConsumeAutoPrompt: () -> Unit,
     onUnlockSuccess: () -> Unit
 ) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val fragmentActivity = remember(context) { context.findFragmentActivity() }
-    val biometricManager = remember(fragmentActivity) {
-        fragmentActivity?.let { BiometricAuthManager(it) }
+    val activity = LocalContext.current as? Activity
+    val biometricManager = remember(activity) {
+        activity?.let { BiometricAuthManager(it) }
     }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -402,16 +424,11 @@ fun BiometricLockScreen(
         }
     }
 
-    DisposableEffect(lifecycleOwner, shouldAutoPrompt) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && shouldAutoPrompt) {
-                onConsumeAutoPrompt()
-                triggerVerification()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+    LaunchedEffect(shouldAutoPrompt) {
+        if (shouldAutoPrompt) {
+            delay(250L)
+            onConsumeAutoPrompt()
+            triggerVerification()
         }
     }
 
@@ -610,14 +627,6 @@ fun BiometricLockScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
-    }
-}
-
-private tailrec fun Context.findFragmentActivity(): FragmentActivity? {
-    return when (this) {
-        is FragmentActivity -> this
-        is ContextWrapper -> baseContext.findFragmentActivity()
-        else -> null
     }
 }
 
@@ -915,7 +924,7 @@ fun EmptyAccountsCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Escanea el código QR mostrado en la aplicación de escritorio BillZen ERP para vincular tu NIT, activar tu sesión única de Administrador y acceder al Dashboard Financiero y Autenticador.",
+                text = "Escanea el código QR que aparece en BillZen ERP para conectar tu empresa.",
                 color = BillZenTextPrimary.copy(alpha = 0.78f),
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
@@ -951,7 +960,7 @@ fun EmptyAccountsCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Ingresar clave o URI manualmente",
+                    text = "Ingresar clave manualmente",
                     color = BillZenTextPrimary,
                     fontSize = 13.sp
                 )
@@ -961,7 +970,7 @@ fun EmptyAccountsCard(
 
             TextButton(onClick = onLoadDemoClick) {
                 Text(
-                    text = "Simular vinculación QR (Abrir vista Administrador)",
+                    text = "Ver demostración",
                     color = BillZenGold,
                     fontSize = 12.sp
                 )
@@ -1108,7 +1117,7 @@ fun AddAccountDialog(
         textContentColor = BillZenTextPrimary,
         title = {
             Text(
-                text = "Vincular empresa manualmente",
+                text = "Conectar empresa",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
             )
@@ -1116,7 +1125,7 @@ fun AddAccountDialog(
         text = {
             Column {
                 Text(
-                    text = "Pega la URI otpauth:// generada por el ERP o escribe los datos manualmente:",
+                    text = "Escribe el NIT y la clave que aparece en BillZen ERP.",
                     fontSize = 13.sp,
                     color = BillZenTextPrimary.copy(alpha = 0.8f)
                 )
@@ -1157,7 +1166,7 @@ fun AddAccountDialog(
                         secretOrUriInput = it
                         errorMessage = null
                     },
-                    label = { Text("Semilla Base32 o URI otpauth://") },
+                    label = { Text("Clave de vinculación") },
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1176,13 +1185,16 @@ fun AddAccountDialog(
             Button(
                 onClick = {
                     val trimmedInput = secretOrUriInput.trim()
+                    if (!trimmedInput.startsWith("otpauth://", ignoreCase = true) && nitInput.isBlank()) {
+                        errorMessage = "Ingresa el NIT de la empresa."
+                        return@Button
+                    }
                     try {
                         val account = if (trimmedInput.startsWith("otpauth://", ignoreCase = true)) {
                             OtpAuthParser.parse(trimmedInput)
                         } else {
-                            require(nitInput.isNotBlank()) { "Ingresa el NIT de la empresa." }
                             require(Base32.isValid(trimmedInput)) {
-                                "La clave secreta no es un código Base32 válido (usa letras A-Z y números 2-7)."
+                                "La clave no es válida. Revísala e intenta de nuevo."
                             }
                             TotpAccount(
                                 nit = nitInput.trim(),
@@ -1191,8 +1203,8 @@ fun AddAccountDialog(
                             )
                         }
                         onSaveAccount(account)
-                    } catch (e: IllegalArgumentException) {
-                        errorMessage = e.message ?: "Datos de vinculación inválidos."
+                    } catch (_: IllegalArgumentException) {
+                        errorMessage = "La clave no es válida. Revísala e intenta de nuevo."
                     }
                 },
                 colors = ButtonDefaults.buttonColors(

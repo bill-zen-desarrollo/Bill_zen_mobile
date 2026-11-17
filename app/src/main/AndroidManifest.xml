@@ -4,6 +4,8 @@
 
     <!-- Permiso para escanear códigos QR de vinculación 2FA -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Permiso normal del framework para BiometricPrompt nativo -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
