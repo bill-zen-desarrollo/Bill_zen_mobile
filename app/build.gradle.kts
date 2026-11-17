@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("androidx.biometric:biometric:1.1.0")
 
     // CameraX + Google ML Kit Barcode Scanning (Lector QR 100% en el dispositivo)
     implementation("androidx.camera:camera-core:1.4.1")
