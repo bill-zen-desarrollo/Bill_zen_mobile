@@ -62,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -1015,6 +1016,41 @@ fun SecurityTokenSectionScreen(
 }
 
 @Composable
+fun BillZenBrandMark(sizeDp: Int = 32) {
+    Canvas(modifier = Modifier.size(sizeDp.dp)) {
+        val w = size.width
+        val h = size.height
+        drawRoundRect(
+            brush = Brush.linearGradient(
+                colors = listOf(Color(0xFF36A97F), Color(0xFF1F7A5B)),
+                start = Offset.Zero,
+                end = Offset(w, h)
+            ),
+            size = Size(w, h),
+            cornerRadius = CornerRadius(w * 0.24f, h * 0.24f)
+        )
+        drawRoundRect(
+            color = Color(0xFFFFFFFF),
+            topLeft = Offset(w * 0.22f, h * 0.20f),
+            size = Size(w * 0.22f, h * 0.60f),
+            cornerRadius = CornerRadius(w * 0.11f, h * 0.11f)
+        )
+        drawRoundRect(
+            color = Color(0xB8FFFFFF),
+            topLeft = Offset(w * 0.50f, h * 0.20f),
+            size = Size(w * 0.28f, h * 0.28f),
+            cornerRadius = CornerRadius(w * 0.14f, h * 0.14f)
+        )
+        drawRoundRect(
+            color = Color(0xFF5BEBD0),
+            topLeft = Offset(w * 0.50f, h * 0.52f),
+            size = Size(w * 0.28f, h * 0.28f),
+            cornerRadius = CornerRadius(w * 0.14f, h * 0.14f)
+        )
+    }
+}
+
+@Composable
 fun BillZenLogoHeader(
     centered: Boolean = false,
     fontSizeSp: Int = 28
@@ -1024,6 +1060,8 @@ fun BillZenLogoHeader(
         horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        BillZenBrandMark(sizeDp = if (fontSizeSp >= 32) 36 else 30)
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = buildAnnotatedString {
                 withStyle(

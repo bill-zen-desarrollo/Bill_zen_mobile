@@ -219,30 +219,34 @@ private fun DashboardTopBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = buildAnnotatedString {
-                    withStyle(
-                        SpanStyle(
-                            color = BillZenDark,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Serif
-                        )
-                    ) {
-                        append("Bill")
-                    }
-                    withStyle(
-                        SpanStyle(
-                            color = BillZenGold,
-                            fontWeight = FontWeight.Light,
-                            fontStyle = FontStyle.Italic,
-                            fontFamily = FontFamily.Serif
-                        )
-                    ) {
-                        append("Zen")
-                    }
-                },
-                fontSize = 28.sp
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BillZenBrandMark(sizeDp = 30)
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                color = BillZenDark,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Serif
+                            )
+                        ) {
+                            append("Bill")
+                        }
+                        withStyle(
+                            SpanStyle(
+                                color = BillZenGold,
+                                fontWeight = FontWeight.Light,
+                                fontStyle = FontStyle.Italic,
+                                fontFamily = FontFamily.Serif
+                            )
+                        ) {
+                            append("Zen")
+                        }
+                    },
+                    fontSize = 28.sp
+                )
+            }
 
             Surface(
                 color = BillZenEmerald.copy(alpha = 0.12f),
