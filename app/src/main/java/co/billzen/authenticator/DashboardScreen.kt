@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -20,8 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +40,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import co.billzen.authenticator.core.CashierSaleSummary
+import co.billzen.authenticator.core.MobileAuditClient
 import co.billzen.authenticator.ui.theme.BillZenDark
 import co.billzen.authenticator.ui.theme.BillZenEmerald
 import co.billzen.authenticator.ui.theme.BillZenError
@@ -58,8 +63,11 @@ import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 fun DashboardScreen(
     uiState: ErpUiState,
     deviceUuidShort: String,
+    onRefreshClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val showProductsChart = !uiState.isLiveConnected || uiState.stockMovements.isNotEmpty()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -69,7 +77,11 @@ fun DashboardScreen(
         DashboardTopBar(
             adminName = uiState.adminName,
             companyNit = uiState.companyNit,
-            deviceUuidShort = deviceUuidShort
+            deviceUuidShort = deviceUuidShort,
+            isLiveConnected = uiState.isLiveConnected,
+            connectionModeLabel = uiState.connectionModeLabel,
+            isRefreshing = uiState.isLoadingAudit,
+            onRefreshClick = onRefreshClick
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -97,15 +109,116 @@ fun DashboardScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Gráfico 1: Donut Chart - Ventas por Categoría
-        CategoryDonutChartCard(slices = uiState.categorySales)
+        if (uiState.cashierSales.isNotEmpty()) {
+            // Datos reales de BillZen.exe: ventas del día agrupadas por cajero
+            CashierSalesCard(sales = uiState.cashierSales)
+            Spacer(modifier = Modifier.height(18.dp))
+        }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        if (!uiState.isLiveConnected) {
+            // Gráfico 1 (solo demostración): Donut Chart - Ventas por Categoría.
+            // En modo conectado se omite porque su total central es estático y las porciones
+            // provienen de los cajeros, ya representados en CashierSalesCard.
+            CategoryDonutChartCard(slices = uiState.categorySales)
+            Spacer(modifier = Modifier.height(18.dp))
+        }
 
-        // Gráfico 2: Barras Horizontales - Productos más vendidos
-        TopProductsBarChartCard(products = uiState.topProducts)
+        if (showProductsChart) {
+            // Gráfico 2: Barras Horizontales - Productos
+            TopProductsBarChartCard(
+                products = uiState.topProducts,
+                isLive = uiState.isLiveConnected
+            )
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+/**
+ * Tarjeta ejecutiva "Ventas por cajero hoy" alimentada por `ventas_por_cajero` de BillZen.exe.
+ * La barra de cada cajero es proporcional al monto del cajero con mayor facturación.
+ */
+@Composable
+private fun CashierSalesCard(sales: List<CashierSaleSummary>) {
+    val maxAmount = sales.maxOfOrNull { it.montoTotal }?.coerceAtLeast(1.0) ?: 1.0
+
+    Surface(
+        color = BillZenWhiteCard,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, BillZenLightBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text(
+                text = "Ventas por cajero hoy",
+                color = BillZenDark,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Facturación del día por usuario",
+                color = BillZenTextSecondary,
+                fontSize = 12.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                sales.forEach { item ->
+                    val progress = (item.montoTotal / maxAmount).toFloat().coerceIn(0.05f, 1f)
+                    val invoicesLabel = if (item.facturasEmitidas == 1) {
+                        "1 factura"
+                    } else {
+                        "${item.facturasEmitidas} facturas"
+                    }
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item.displayName,
+                                color = BillZenDark,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "$invoicesLabel · ${MobileAuditClient.formatCopCurrency(item.montoTotal)}",
+                                color = BillZenTextSecondary,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(BillZenLightBorder)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(fraction = progress)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(BillZenEmerald)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -113,7 +226,11 @@ fun DashboardScreen(
 private fun DashboardTopBar(
     adminName: String,
     companyNit: String,
-    deviceUuidShort: String
+    deviceUuidShort: String,
+    isLiveConnected: Boolean,
+    connectionModeLabel: String,
+    isRefreshing: Boolean,
+    onRefreshClick: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -175,6 +292,58 @@ private fun DashboardTopBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth()
         )
+
+        if (isLiveConnected) {
+            // Se omite el prefijo técnico (p. ej. "READ_ONLY • ") y se deja solo el canal de conexión.
+            val channelLabel = connectionModeLabel.substringAfter("• ").trim()
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(BillZenEmerald)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Conectado · $channelLabel",
+                    color = BillZenEmerald,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        color = BillZenEmerald,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .size(16.dp)
+                    )
+                } else {
+                    TextButton(
+                        onClick = onRefreshClick,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "Actualizar",
+                            color = BillZenEmerald,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -336,7 +505,10 @@ private fun CategoryDonutChartCard(slices: List<CategorySaleSlice>) {
     }
 }
 @Composable
-private fun TopProductsBarChartCard(products: List<TopProductRank>) {
+private fun TopProductsBarChartCard(
+    products: List<TopProductRank>,
+    isLive: Boolean
+) {
     Surface(
         color = BillZenWhiteCard,
         shape = RoundedCornerShape(18.dp),
@@ -345,13 +517,17 @@ private fun TopProductsBarChartCard(products: List<TopProductRank>) {
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
-                text = "Productos más vendidos",
+                text = if (isLive) "Productos con más movimiento hoy" else "Productos más vendidos",
                 color = BillZenDark,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Ranking por unidades y facturación acumulada",
+                text = if (isLive) {
+                    "Unidades movidas y stock resultante"
+                } else {
+                    "Ranking por unidades y facturación acumulada"
+                },
                 color = BillZenTextSecondary,
                 fontSize = 12.sp
             )

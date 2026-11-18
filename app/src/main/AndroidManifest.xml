@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permiso para conexión HTTPS/HTTP con el servidor BillZen ERP (Cloudflare Tunnel + LAN) -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Permiso para escanear códigos QR de vinculación 2FA -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Permiso normal del framework para BiometricPrompt nativo -->
@@ -12,6 +14,7 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

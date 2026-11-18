@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -71,6 +72,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
@@ -81,7 +84,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import co.billzen.authenticator.core.Base32
 import co.billzen.authenticator.core.BiometricAuthManager
+import co.billzen.authenticator.core.MobileAuditClient
+import co.billzen.authenticator.core.MobileLoginResult
 import co.billzen.authenticator.core.OtpAuthParser
+import co.billzen.authenticator.core.QrPairingPackage
 import co.billzen.authenticator.core.SecureAccountStore
 import co.billzen.authenticator.core.SecurityDeviceManager
 import co.billzen.authenticator.core.TotpAccount
@@ -157,6 +163,8 @@ fun BillZenRootFlow(
     var shouldAutoTriggerBiometric by remember { mutableStateOf(true) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showManualDialog by remember { mutableStateOf(false) }
+    var pendingQrPackage by remember { mutableStateOf<QrPairingPackage?>(null) }
+    var qrLoginError by remember { mutableStateOf<String?>(null) }
     var accountPendingDelete by remember { mutableStateOf<TotpAccount?>(null) }
 
     // Carga asíncrona en Dispatchers.IO después del primer fotograma para liberar el Splash Screen en <16 ms
@@ -294,14 +302,12 @@ fun BillZenRootFlow(
                     ErpSection.DASHBOARD -> {
                         DashboardScreen(
                             uiState = uiState,
-                            deviceUuidShort = deviceUuidShort
+                            deviceUuidShort = deviceUuidShort,
+                            onRefreshClick = { viewModel.refreshDailyAudit() }
                         )
                     }
                     ErpSection.ACCOUNTING -> {
-                        AccountingScreen(
-                            summary = uiState.accountingSummary,
-                            expenses = uiState.expenses
-                        )
+                        AccountingScreen(uiState = uiState)
                     }
                     ErpSection.TOKEN_2FA -> {
                         SecurityTokenSectionScreen(
@@ -325,23 +331,70 @@ fun BillZenRootFlow(
                 showManualDialog = true
             },
             onQrCodeDetected = { rawQr ->
-                try {
-                    val parsedAccount = OtpAuthParser.parse(rawQr)
-                    accounts = accountStore?.saveAccount(parsedAccount) ?: (accounts + parsedAccount)
-                    isSessionUnlocked = true
+                // 1) Paquete JSON de emparejamiento generado por BillZen.exe
+                val pairingPackage = runCatching { MobileAuditClient.parseQrPayload(rawQr) }.getOrNull()
+                if (pairingPackage != null) {
                     showQrScanner = false
-                    viewModel.selectSection(ErpSection.DASHBOARD)
-                    Toast.makeText(
-                        context,
-                        "NIT ${parsedAccount.nit} vinculado. Abriendo BillZen ERP...",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                } catch (_: IllegalArgumentException) {
-                    Toast.makeText(
-                        context,
-                        "Este código QR no pertenece a BillZen ERP.",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    qrLoginError = null
+                    pendingQrPackage = pairingPackage
+                } else {
+                    // 2) Compatibilidad: URI otpauth:// clásica
+                    try {
+                        val parsedAccount = OtpAuthParser.parse(rawQr)
+                        accounts = accountStore?.saveAccount(parsedAccount) ?: (accounts + parsedAccount)
+                        isSessionUnlocked = true
+                        showQrScanner = false
+                        viewModel.selectSection(ErpSection.DASHBOARD)
+                        Toast.makeText(
+                            context,
+                            "NIT ${parsedAccount.nit} vinculado. Abriendo BillZen ERP...",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } catch (_: IllegalArgumentException) {
+                        Toast.makeText(
+                            context,
+                            "Este código QR no pertenece a BillZen ERP.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        )
+    }
+
+    pendingQrPackage?.let { pkg ->
+        AdminQrLoginDialog(
+            pkg = pkg,
+            isLoading = uiState.isLoadingAudit,
+            errorMessage = qrLoginError,
+            onDismiss = {
+                pendingQrPackage = null
+                qrLoginError = null
+            },
+            onLogin = { username, password ->
+                qrLoginError = null
+                viewModel.loginWithQrPackage(pkg, username, password) { result ->
+                    when (result) {
+                        is MobileLoginResult.Success -> {
+                            val linkedAccount = TotpAccount(
+                                nit = pkg.nit,
+                                companyName = pkg.empresa,
+                                secret = deriveLocalSecret(pkg.pairingToken)
+                            )
+                            accounts = accountStore?.saveAccount(linkedAccount) ?: (accounts + linkedAccount)
+                            isSessionUnlocked = true
+                            pendingQrPackage = null
+                            viewModel.selectSection(ErpSection.DASHBOARD)
+                            Toast.makeText(
+                                context,
+                                "Sesión iniciada. Datos de ${pkg.empresa} actualizados.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        is MobileLoginResult.Failure -> {
+                            qrLoginError = result.errorMessage
+                        }
+                    }
                 }
             }
         )
@@ -1221,6 +1274,165 @@ fun AddAccountDialog(
             }
         }
     )
+}
+
+/**
+ * Diálogo de inicio de sesión del Administrador tras escanear el QR de `BillZen.exe`.
+ * Es "stateless" respecto al login: el estado de carga y el error vienen del llamador,
+ * y solo conserva localmente lo que el usuario escribe.
+ */
+@Composable
+fun AdminQrLoginDialog(
+    pkg: QrPairingPackage,
+    isLoading: Boolean,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onLogin: (username: String, password: String) -> Unit
+) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = BillZenTextPrimary,
+        unfocusedTextColor = BillZenTextPrimary,
+        focusedBorderColor = BillZenMint,
+        unfocusedBorderColor = BillZenBorder,
+        focusedLabelColor = BillZenMint,
+        unfocusedLabelColor = BillZenTextPrimary.copy(alpha = 0.7f)
+    )
+
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        containerColor = BillZenSurface,
+        titleContentColor = BillZenTextPrimary,
+        textContentColor = BillZenTextPrimary,
+        title = {
+            Text(
+                text = "Iniciar sesión de Administrador",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Column {
+                Surface(
+                    color = BillZenCard,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, BillZenBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = pkg.empresa,
+                            color = BillZenTextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "NIT: ${pkg.nit}",
+                            color = BillZenGold,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Usuario Administrador") },
+                    singleLine = true,
+                    enabled = !isLoading,
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña") },
+                    singleLine = true,
+                    enabled = !isLoading,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (errorMessage != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage,
+                        color = BillZenError,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onLogin(username, password) },
+                enabled = !isLoading,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BillZenEmerald,
+                    contentColor = BillZenTextPrimary
+                )
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        color = BillZenTextPrimary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
+                    Text(
+                        text = "Iniciar sesión",
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isLoading) {
+                Text("Cancelar", color = BillZenTextPrimary.copy(alpha = 0.7f))
+            }
+        }
+    )
+}
+
+private const val BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+/**
+ * `TotpAccount.secret` debe ser Base32 válido porque la pestaña "Autenticador" lo usa en
+ * `TotpGenerator`. El paquete QR de BillZen.exe no trae semilla TOTP, así que se deriva un valor
+ * Base32 determinista (máx. 32 caracteres) del `pairing_token` solo para persistir la empresa
+ * vinculada sin romper esa pestaña. No es una credencial de acceso al servidor.
+ */
+private fun deriveLocalSecret(pairingToken: String): String {
+    val builder = StringBuilder()
+    var buffer = 0
+    var bitsInBuffer = 0
+    for (byte in pairingToken.toByteArray(Charsets.UTF_8)) {
+        buffer = (buffer shl 8) or (byte.toInt() and 0xFF)
+        bitsInBuffer += 8
+        while (bitsInBuffer >= 5) {
+            bitsInBuffer -= 5
+            builder.append(BASE32_ALPHABET[(buffer shr bitsInBuffer) and 0x1F])
+        }
+        buffer = buffer and ((1 shl bitsInBuffer) - 1)
+    }
+    if (bitsInBuffer > 0) {
+        builder.append(BASE32_ALPHABET[(buffer shl (5 - bitsInBuffer)) and 0x1F])
+    }
+    return builder.toString().take(32).padEnd(16, 'A')
 }
 
 @Composable
