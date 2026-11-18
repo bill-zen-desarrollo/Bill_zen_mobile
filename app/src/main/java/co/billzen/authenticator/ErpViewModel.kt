@@ -8,6 +8,7 @@ import co.billzen.authenticator.core.DailyAuditSnapshot
 import co.billzen.authenticator.core.LowStockAlertItem
 import co.billzen.authenticator.core.MobileAuditClient
 import co.billzen.authenticator.core.MobileLoginResult
+import co.billzen.authenticator.core.PersistedMobileSession
 import co.billzen.authenticator.core.QrPairingPackage
 import co.billzen.authenticator.core.SecurityAuditLogItem
 import co.billzen.authenticator.core.StockMovementItem
@@ -117,18 +118,58 @@ class ErpViewModel : ViewModel() {
     @Volatile
     private var currentSessionToken: String? = null
 
+    @Volatile
+    private var onSessionRevokedCallback: (() -> Unit)? = null
+
     fun selectSection(section: ErpSection) {
         _uiState.update { it.copy(selectedSection = section) }
     }
 
     fun syncLinkedCompany(companyName: String, nit: String) {
-        _uiState.update {
-            it.copy(
-                adminName = companyName,
+        _uiState.update { state ->
+            state.copy(
+                adminName = if (state.isLiveConnected) state.adminName else companyName,
                 companyName = companyName,
                 companyNit = nit
             )
         }
+    }
+
+    fun restoreSavedSession(
+        session: PersistedMobileSession,
+        onSessionRevoked: () -> Unit = {}
+    ) {
+        currentBaseUrl = session.activeBaseUrl
+        currentFallbackUrl = session.fallbackBaseUrl
+        currentSessionToken = session.sessionToken
+        onSessionRevokedCallback = onSessionRevoked
+
+        val transportLabel = if (session.isRemoteTunnel) {
+            "READ_ONLY • Túnel HTTPS Cloudflare"
+        } else {
+            "READ_ONLY • Red Local LAN"
+        }
+
+        _uiState.update { state ->
+            state.copy(
+                adminName = session.adminName.ifBlank { state.adminName },
+                companyName = session.companyName.ifBlank { state.companyName },
+                companyNit = session.nit.ifBlank { state.companyNit },
+                isLiveConnected = true,
+                connectionModeLabel = transportLabel,
+                activeBaseUrl = session.activeBaseUrl,
+                fallbackBaseUrl = session.fallbackBaseUrl,
+                sessionToken = session.sessionToken,
+                syncErrorMessage = null
+            )
+        }
+
+        refreshDailyAudit(
+            baseUrl = session.activeBaseUrl,
+            fallbackUrl = session.fallbackBaseUrl,
+            sessionToken = session.sessionToken,
+            onUnauthorized = onSessionRevoked
+        )
     }
 
     fun clearSyncError() {
@@ -235,6 +276,7 @@ class ErpViewModel : ViewModel() {
         baseUrl: String? = null,
         fallbackUrl: String? = null,
         sessionToken: String? = null,
+        onUnauthorized: (() -> Unit)? = null,
         onComplete: ((Result<DailyAuditSnapshot>) -> Unit)? = null
     ) {
         val resolvedBaseUrl = baseUrl?.takeIf { it.isNotBlank() }
@@ -278,12 +320,38 @@ class ErpViewModel : ViewModel() {
                     applyDailyAuditSnapshot(snapshot)
                 },
                 onFailure = { error ->
-                    _uiState.update { state ->
-                        state.copy(
-                            isLoadingAudit = false,
-                            syncErrorMessage = error.localizedMessage
-                                ?: "Error de red al sincronizar la auditoría del día."
-                        )
+                    val errText = error.message.orEmpty().lowercase()
+                    val isRevokedOrUnauthorized = error is SecurityException ||
+                        errText.contains("401") ||
+                        errText.contains("403") ||
+                        errText.contains("expir") ||
+                        errText.contains("revocad") ||
+                        errText.contains("inválid") ||
+                        errText.contains("invalida") ||
+                        errText.contains("no autorizad")
+
+                    if (isRevokedOrUnauthorized) {
+                        currentSessionToken = null
+                        _uiState.update { state ->
+                            state.copy(
+                                isLoadingAudit = false,
+                                isLiveConnected = false,
+                                sessionToken = null,
+                                connectionModeLabel = "SESIÓN REVOCADA O EXPIRADA",
+                                syncErrorMessage = error.localizedMessage
+                                    ?: "La sesión móvil fue cerrada o expiró en BillZen ERP (HTTP 401)."
+                            )
+                        }
+                        val revokeAction = onUnauthorized ?: onSessionRevokedCallback
+                        revokeAction?.invoke()
+                    } else {
+                        _uiState.update { state ->
+                            state.copy(
+                                isLoadingAudit = false,
+                                syncErrorMessage = error.localizedMessage
+                                    ?: "Error de red al sincronizar la auditoría del día."
+                            )
+                        }
                     }
                 }
             )

@@ -12,9 +12,25 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/**
+ * Sesión móvil de Administrador persistida y cifrada con AES-256-GCM en `AndroidKeyStore`.
+ * Respeta el tiempo de vida máximo emitido por `BillZen.exe` (`TTL_SESION_MOVIL_SEG = 43200`, 12 horas).
+ */
+data class PersistedMobileSession(
+    val nit: String,
+    val companyName: String,
+    val adminName: String,
+    val sessionToken: String,
+    val activeBaseUrl: String,
+    val fallbackBaseUrl: String?,
+    val isRemoteTunnel: Boolean,
+    val expiresAtEpochMillis: Long
+)
+
 class SecureAccountStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_FILE_NAME, Context.MODE_PRIVATE)
 
+    @Synchronized
     fun getAccounts(): List<TotpAccount> {
         val encryptedPayload = prefs.getString(KEY_ACCOUNTS_BLOB, null) ?: return emptyList()
         return try {
@@ -25,6 +41,7 @@ class SecureAccountStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun saveAccount(account: TotpAccount): List<TotpAccount> {
         val current = getAccounts().toMutableList()
         val existingIndex = current.indexOfFirst { it.nit.equals(account.nit, ignoreCase = true) }
@@ -37,11 +54,46 @@ class SecureAccountStore(context: Context) {
         return current
     }
 
+    @Synchronized
     fun removeAccount(nit: String): List<TotpAccount> {
         val updated = getAccounts().filterNot { it.nit.equals(nit, ignoreCase = true) }
         persistList(updated)
         return updated
     }
+    @Synchronized
+    fun saveMobileSession(session: PersistedMobileSession) {
+        val jsonText = serializeMobileSession(session)
+        val encryptedPayload = encrypt(jsonText)
+        prefs.edit().putString(KEY_MOBILE_SESSION_BLOB, encryptedPayload).apply()
+    }
+
+    @Synchronized
+    fun getValidMobileSession(): PersistedMobileSession? {
+        val encryptedPayload = prefs.getString(KEY_MOBILE_SESSION_BLOB, null) ?: return null
+        return try {
+            val jsonText = decrypt(encryptedPayload)
+            val session = deserializeMobileSession(jsonText)
+            if (
+                session.sessionToken.isBlank() ||
+                session.activeBaseUrl.isBlank() ||
+                System.currentTimeMillis() >= session.expiresAtEpochMillis
+            ) {
+                clearMobileSession()
+                null
+            } else {
+                session
+            }
+        } catch (_: Exception) {
+            clearMobileSession()
+            null
+        }
+    }
+
+    @Synchronized
+    fun clearMobileSession() {
+        prefs.edit().remove(KEY_MOBILE_SESSION_BLOB).apply()
+    }
+
     private fun persistList(accounts: List<TotpAccount>) {
         val jsonText = serializeAccounts(accounts)
         val encryptedPayload = encrypt(jsonText)
@@ -88,6 +140,7 @@ class SecureAccountStore(context: Context) {
         val plainBytes = cipher.doFinal(cipherBytes)
         return String(plainBytes, Charsets.UTF_8)
     }
+
     private fun serializeAccounts(accounts: List<TotpAccount>): String {
         val array = JSONArray()
         for (acc in accounts) {
@@ -103,6 +156,7 @@ class SecureAccountStore(context: Context) {
         }
         return array.toString()
     }
+
     private fun deserializeAccounts(jsonText: String): List<TotpAccount> {
         val array = JSONArray(jsonText)
         val list = mutableListOf<TotpAccount>()
@@ -121,12 +175,43 @@ class SecureAccountStore(context: Context) {
         }
         return list
     }
+
+    private fun serializeMobileSession(session: PersistedMobileSession): String {
+        return JSONObject().apply {
+            put("nit", session.nit)
+            put("companyName", session.companyName)
+            put("adminName", session.adminName)
+            put("sessionToken", session.sessionToken)
+            put("activeBaseUrl", session.activeBaseUrl)
+            put("fallbackBaseUrl", session.fallbackBaseUrl ?: "")
+            put("isRemoteTunnel", session.isRemoteTunnel)
+            put("expiresAtEpochMillis", session.expiresAtEpochMillis)
+        }.toString()
+    }
+
+    private fun deserializeMobileSession(jsonText: String): PersistedMobileSession {
+        val obj = JSONObject(jsonText)
+        val rawFallback = obj.optString("fallbackBaseUrl", "").trim()
+        return PersistedMobileSession(
+            nit = obj.optString("nit", ""),
+            companyName = obj.optString("companyName", "BillZen"),
+            adminName = obj.optString("adminName", "Administrador"),
+            sessionToken = obj.optString("sessionToken", ""),
+            activeBaseUrl = obj.optString("activeBaseUrl", ""),
+            fallbackBaseUrl = rawFallback.ifBlank { null },
+            isRemoteTunnel = obj.optBoolean("isRemoteTunnel", false),
+            expiresAtEpochMillis = obj.optLong("expiresAtEpochMillis", 0L)
+        )
+    }
+
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "billzen_totp_master_key_v1"
         private const val PREFS_FILE_NAME = "billzen_secure_accounts"
         private const val KEY_ACCOUNTS_BLOB = "encrypted_accounts_v1"
+        private const val KEY_MOBILE_SESSION_BLOB = "encrypted_mobile_session_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_LENGTH_BITS = 128
+        const val DEFAULT_MOBILE_SESSION_TTL_SECONDS = 43_200L
     }
 }

@@ -87,6 +87,7 @@ import co.billzen.authenticator.core.BiometricAuthManager
 import co.billzen.authenticator.core.MobileAuditClient
 import co.billzen.authenticator.core.MobileLoginResult
 import co.billzen.authenticator.core.OtpAuthParser
+import co.billzen.authenticator.core.PersistedMobileSession
 import co.billzen.authenticator.core.QrPairingPackage
 import co.billzen.authenticator.core.SecureAccountStore
 import co.billzen.authenticator.core.SecurityDeviceManager
@@ -169,18 +170,24 @@ fun BillZenRootFlow(
 
     // Carga asíncrona en Dispatchers.IO después del primer fotograma para liberar el Splash Screen en <16 ms
     LaunchedEffect(Unit) {
-        val (loadedAccounts, loadedUuidShort) = withContext(Dispatchers.IO) {
+        val (loadedAccounts, loadedUuidShort, savedSession) = withContext(Dispatchers.IO) {
             val storedAccounts = accountStore?.getAccounts() ?: emptyList()
             val shortUuid = try {
                 SecurityDeviceManager(context).getOrCreateBoundDeviceUuid().take(8).uppercase()
             } catch (_: Exception) {
                 "--------"
             }
-            storedAccounts to shortUuid
+            val validSession = accountStore?.getValidMobileSession()
+            Triple(storedAccounts, shortUuid, validSession)
         }
         accounts = loadedAccounts
         deviceUuidShort = loadedUuidShort
         isInitialLoadDone = true
+        if (savedSession != null) {
+            viewModel.restoreSavedSession(savedSession) {
+                accountStore?.clearMobileSession()
+            }
+        }
     }
 
     // Bloquea automáticamente la sesión cada vez que la aplicación pasa a segundo plano o se apaga la pantalla
@@ -294,7 +301,15 @@ fun BillZenRootFlow(
                     deviceUuidShort = deviceUuidShort,
                     shouldAutoPrompt = shouldAutoTriggerBiometric,
                     onConsumeAutoPrompt = { shouldAutoTriggerBiometric = false },
-                    onUnlockSuccess = { isSessionUnlocked = true }
+                    onUnlockSuccess = {
+                        isSessionUnlocked = true
+                        val savedSession = accountStore?.getValidMobileSession()
+                        if (savedSession != null) {
+                            viewModel.restoreSavedSession(savedSession) {
+                                accountStore.clearMobileSession()
+                            }
+                        }
+                    }
                 )
             } else {
                 // ESTADO 3: Interfaz completa de Administrador del negocio (Sesión desbloqueada)
@@ -303,7 +318,11 @@ fun BillZenRootFlow(
                         DashboardScreen(
                             uiState = uiState,
                             deviceUuidShort = deviceUuidShort,
-                            onRefreshClick = { viewModel.refreshDailyAudit() }
+                            onRefreshClick = {
+                                viewModel.refreshDailyAudit(
+                                    onUnauthorized = { accountStore?.clearMobileSession() }
+                                )
+                            }
                         )
                     }
                     ErpSection.ACCOUNTING -> {
@@ -381,6 +400,22 @@ fun BillZenRootFlow(
                                 companyName = pkg.empresa,
                                 secret = deriveLocalSecret(pkg.pairingToken)
                             )
+                            val ttlSeconds = if (result.expiresInSeconds > 0L) {
+                                result.expiresInSeconds
+                            } else {
+                                SecureAccountStore.DEFAULT_MOBILE_SESSION_TTL_SECONDS
+                            }
+                            val persistedSession = PersistedMobileSession(
+                                nit = pkg.nit,
+                                companyName = pkg.empresa,
+                                adminName = result.usuario.nombreCompleto.ifBlank { result.usuario.username },
+                                sessionToken = result.sessionToken,
+                                activeBaseUrl = result.activeBaseUrl,
+                                fallbackBaseUrl = result.fallbackBaseUrl,
+                                isRemoteTunnel = result.isRemoteTunnel,
+                                expiresAtEpochMillis = System.currentTimeMillis() + (ttlSeconds * 1000L)
+                            )
+                            accountStore?.saveMobileSession(persistedSession)
                             accounts = accountStore?.saveAccount(linkedAccount) ?: (accounts + linkedAccount)
                             isSessionUnlocked = true
                             pendingQrPackage = null
@@ -422,6 +457,7 @@ fun BillZenRootFlow(
             account = target,
             onDismiss = { accountPendingDelete = null },
             onConfirmDelete = {
+                accountStore?.clearMobileSession()
                 val updatedAccounts = accountStore?.removeAccount(target.nit)
                     ?: accounts.filterNot { it.nit == target.nit }
                 accounts = updatedAccounts
@@ -1276,11 +1312,6 @@ fun AddAccountDialog(
     )
 }
 
-/**
- * Diálogo de inicio de sesión del Administrador tras escanear el QR de `BillZen.exe`.
- * Es "stateless" respecto al login: el estado de carga y el error vienen del llamador,
- * y solo conserva localmente lo que el usuario escribe.
- */
 @Composable
 fun AdminQrLoginDialog(
     pkg: QrPairingPackage,
