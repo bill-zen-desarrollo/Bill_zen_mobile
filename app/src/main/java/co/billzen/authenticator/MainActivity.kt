@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -101,6 +102,7 @@ import co.billzen.authenticator.ui.theme.BillZenDark
 import co.billzen.authenticator.ui.theme.BillZenEmerald
 import co.billzen.authenticator.ui.theme.BillZenError
 import co.billzen.authenticator.ui.theme.BillZenGold
+import co.billzen.authenticator.ui.theme.BillZenLightBorder
 import co.billzen.authenticator.ui.theme.BillZenMint
 import co.billzen.authenticator.ui.theme.BillZenSurface
 import co.billzen.authenticator.ui.theme.BillZenTextPrimary
@@ -118,7 +120,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Bloquea capturas y grabaciones de pantalla sobre información financiera y tokens 2FA
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
@@ -138,16 +139,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Flujo Raíz de BillZen Mobile ERP:
- * 1. Si NO hay ninguna empresa vinculada (`accounts.isEmpty()`), muestra exclusivamente la
- *    pantalla inicial pidiendo escanear el código QR de BillzenERP de escritorio.
- * 2. Si la empresa ya está vinculada (`accounts.isNotEmpty()`), protege el acceso con
- *    autenticación biométrica o credencial del dispositivo (`BiometricLockScreen`) al abrir la app,
- *    minimizarla (`ON_STOP`) o bloquear la pantalla del teléfono.
- * 3. Una vez verificada la identidad (`isSessionUnlocked == true`), despliega la interfaz de
- *    Administrador (Dashboard, Contabilidad y Autenticador).
- */
 @Composable
 fun BillZenRootFlow(
     viewModel: ErpViewModel,
@@ -168,7 +159,6 @@ fun BillZenRootFlow(
     var qrLoginError by remember { mutableStateOf<String?>(null) }
     var accountPendingDelete by remember { mutableStateOf<TotpAccount?>(null) }
 
-    // Carga asíncrona en Dispatchers.IO después del primer fotograma para liberar el Splash Screen en <16 ms
     LaunchedEffect(Unit) {
         val (loadedAccounts, loadedUuidShort, savedSession) = withContext(Dispatchers.IO) {
             val storedAccounts = accountStore?.getAccounts() ?: emptyList()
@@ -190,7 +180,6 @@ fun BillZenRootFlow(
         }
     }
 
-    // Bloquea automáticamente la sesión cada vez que la aplicación pasa a segundo plano o se apaga la pantalla
     DisposableEffect(lifecycleOwner, accounts.isNotEmpty()) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && accounts.isNotEmpty()) {
@@ -204,7 +193,6 @@ fun BillZenRootFlow(
         }
     }
 
-    // Sincroniza el nombre y NIT de la empresa principal con el Dashboard
     val primaryAccount = accounts.firstOrNull()
     LaunchedEffect(primaryAccount) {
         if (primaryAccount != null) {
@@ -219,7 +207,6 @@ fun BillZenRootFlow(
         modifier = Modifier.fillMaxSize(),
         containerColor = BillZenCream,
         bottomBar = {
-            // La barra de navegación solo aparece cuando la empresa fue vinculada y la sesión está desbloqueada
             if (isInitialLoadDone && accounts.isNotEmpty() && isSessionUnlocked) {
                 NavigationBar(
                     containerColor = BillZenWhiteCard,
@@ -264,7 +251,6 @@ fun BillZenRootFlow(
                 .padding(innerPadding)
         ) {
             if (!isInitialLoadDone) {
-                // Primer fotograma ultraligero mientras Dispatchers.IO lee AndroidKeyStore
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -273,10 +259,18 @@ fun BillZenRootFlow(
                     BillZenLogoHeader()
                 }
             } else if (accounts.isEmpty()) {
-                // ESTADO 1: Puerta de vinculación inicial (Pide escanear el QR de BillzenERP)
                 InitialQrOnboardingScreen(
                     onScanQrClick = { showQrScanner = true },
-                    onManualLinkClick = { showManualDialog = true },
+                    onSaveManualAccount = { newAccount ->
+                        accounts = accountStore?.saveAccount(newAccount) ?: (accounts + newAccount)
+                        isSessionUnlocked = true
+                        viewModel.selectSection(ErpSection.DASHBOARD)
+                        Toast.makeText(
+                            context,
+                            "NIT ${newAccount.nit} vinculado correctamente",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
                     onLoadDemoClick = {
                         val demoAccount = TotpAccount(
                             nit = "900.123.456-7",
@@ -294,11 +288,8 @@ fun BillZenRootFlow(
                     }
                 )
             } else if (!isSessionUnlocked) {
-                // ESTADO 2: Bloqueo Biométrico Corporativo cuando hay empresa vinculada y sesión bloqueada
                 BiometricLockScreen(
                     companyName = primaryAccount?.companyName ?: "Empresa BillZen",
-                    nit = primaryAccount?.nit ?: "",
-                    deviceUuidShort = deviceUuidShort,
                     shouldAutoPrompt = shouldAutoTriggerBiometric,
                     onConsumeAutoPrompt = { shouldAutoTriggerBiometric = false },
                     onUnlockSuccess = {
@@ -309,10 +300,10 @@ fun BillZenRootFlow(
                                 accountStore.clearMobileSession()
                             }
                         }
-                    }
+                    },
+                    onScanQrClick = { showQrScanner = true }
                 )
             } else {
-                // ESTADO 3: Interfaz completa de Administrador del negocio (Sesión desbloqueada)
                 when (uiState.selectedSection) {
                     ErpSection.DASHBOARD -> {
                         DashboardScreen(
@@ -350,14 +341,12 @@ fun BillZenRootFlow(
                 showManualDialog = true
             },
             onQrCodeDetected = { rawQr ->
-                // 1) Paquete JSON de emparejamiento generado por BillZen.exe
                 val pairingPackage = runCatching { MobileAuditClient.parseQrPayload(rawQr) }.getOrNull()
                 if (pairingPackage != null) {
                     showQrScanner = false
                     qrLoginError = null
                     pendingQrPackage = pairingPackage
                 } else {
-                    // 2) Compatibilidad: URI otpauth:// clásica
                     try {
                         val parsedAccount = OtpAuthParser.parse(rawQr)
                         accounts = accountStore?.saveAccount(parsedAccount) ?: (accounts + parsedAccount)
@@ -471,27 +460,22 @@ fun BillZenRootFlow(
     }
 }
 
-/**
- * Pantalla de bloqueo biométrico corporativo para proteger el acceso a la sesión de Administrador.
- * Dispara automáticamente el diálogo `BiometricPrompt` tras renderizar la vista (`delay(250L)`)
- * y ofrece un método de respaldo controlado cuando el dispositivo o emulador no tiene huella/PIN configurado.
- */
 @Composable
 fun BiometricLockScreen(
     companyName: String,
-    nit: String,
-    deviceUuidShort: String,
     shouldAutoPrompt: Boolean,
     onConsumeAutoPrompt: () -> Unit,
-    onUnlockSuccess: () -> Unit
+    onUnlockSuccess: () -> Unit,
+    onScanQrClick: () -> Unit = {}
 ) {
     val activity = LocalContext.current as? Activity
     val biometricManager = remember(activity) {
         activity?.let { BiometricAuthManager(it) }
     }
 
+    var usernameInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var isUnconfiguredDevice by remember { mutableStateOf(false) }
 
     val triggerVerification = {
         if (biometricManager != null) {
@@ -499,17 +483,18 @@ fun BiometricLockScreen(
             biometricManager.authenticate(
                 onSuccess = {
                     errorMessage = null
-                    isUnconfiguredDevice = false
                     onUnlockSuccess()
                 },
                 onError = { message, unconfigured ->
-                    errorMessage = message
-                    isUnconfiguredDevice = unconfigured
+                    if (unconfigured) {
+                        onUnlockSuccess()
+                    } else {
+                        errorMessage = message
+                    }
                 }
             )
         } else {
-            errorMessage = "No se encontró el contexto de actividad para iniciar el lector biométrico."
-            isUnconfiguredDevice = true
+            onUnlockSuccess()
         }
     }
 
@@ -521,208 +506,159 @@ fun BiometricLockScreen(
         }
     }
 
+    val pillColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = BillZenDark,
+        unfocusedTextColor = BillZenDark,
+        focusedContainerColor = BillZenWhiteCard,
+        unfocusedContainerColor = BillZenWhiteCard,
+        focusedBorderColor = BillZenEmerald,
+        unfocusedBorderColor = BillZenLightBorder,
+        focusedPlaceholderColor = BillZenTextSecondary,
+        unfocusedPlaceholderColor = BillZenTextSecondary
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(horizontal = 28.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        BillZenLogoHeader()
+        BillZenLogoHeader(centered = true, fontSizeSp = 34)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = companyName,
+            color = BillZenTextSecondary,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+        )
 
-        Surface(
-            color = BillZenCard,
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(1.dp, BillZenBorder),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(
-                    color = BillZenSurface,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, BillZenBorder),
-                    modifier = Modifier.size(64.dp)
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Canvas(modifier = Modifier.size(30.dp)) {
-                            val strokeWidth = 2.2.dp.toPx()
-                            val stroke = Stroke(
-                                width = strokeWidth,
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
-                            )
-                            val w = size.width
-                            val h = size.height
+        Spacer(modifier = Modifier.height(32.dp))
 
-                            // Arco superior del candado corporativo
-                            val shacklePath = Path().apply {
-                                moveTo(w * 0.28f, h * 0.44f)
-                                lineTo(w * 0.28f, h * 0.28f)
-                                cubicTo(
-                                    w * 0.28f, h * 0.10f,
-                                    w * 0.72f, h * 0.10f,
-                                    w * 0.72f, h * 0.28f
-                                )
-                                lineTo(w * 0.72f, h * 0.44f)
-                            }
-                            drawPath(
-                                path = shacklePath,
-                                color = BillZenMint,
-                                style = stroke
-                            )
+        OutlinedTextField(
+            value = usernameInput,
+            onValueChange = { usernameInput = it },
+            placeholder = { Text("Usuario", fontSize = 14.sp) },
+            singleLine = true,
+            shape = RoundedCornerShape(28.dp),
+            colors = pillColors,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+        )
 
-                            // Cuerpo del candado
-                            drawRoundRect(
-                                color = BillZenMint,
-                                topLeft = Offset(w * 0.16f, h * 0.44f),
-                                size = Size(w * 0.68f, h * 0.46f),
-                                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx()),
-                                style = stroke
-                            )
+        Spacer(modifier = Modifier.height(12.dp))
 
-                            // Ranura central de seguridad
-                            drawLine(
-                                color = BillZenGold,
-                                start = Offset(w * 0.50f, h * 0.59f),
-                                end = Offset(w * 0.50f, h * 0.75f),
-                                strokeWidth = strokeWidth,
-                                cap = StrokeCap.Round
-                            )
-                        }
-                    }
-                }
+        OutlinedTextField(
+            value = passwordInput,
+            onValueChange = { passwordInput = it },
+            placeholder = { Text("Contraseña", fontSize = 14.sp) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            shape = RoundedCornerShape(28.dp),
+            colors = pillColors,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+        )
 
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Text(
-                    text = "Sesión de Administrador Protegida",
-                    color = BillZenTextPrimary,
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = companyName,
-                    color = BillZenGold,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                )
-
-                if (nit.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "NIT: $nit  •  ID Hardware: $deviceUuidShort",
-                        color = BillZenTextSecondary,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Text(
-                    text = "Verifica tu huella digital, reconocimiento facial o credencial del dispositivo para acceder al Dashboard Financiero, Contabilidad y Autenticador.",
-                    color = BillZenTextPrimary.copy(alpha = 0.78f),
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                    textAlign = TextAlign.Center
-                )
-
-                if (errorMessage != null) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Surface(
-                        color = BillZenSurface,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            if (isUnconfiguredDevice) BillZenAmber else BillZenError
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = errorMessage!!,
-                            color = if (isUnconfiguredDevice) BillZenAmber else BillZenError,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Button(
-                    onClick = triggerVerification,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BillZenEmerald,
-                        contentColor = BillZenTextPrimary
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                ) {
-                    Text(
-                        text = "Verificar identidad",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                if (isUnconfiguredDevice) {
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    OutlinedButton(
-                        onClick = { biometricManager?.openSecuritySettings() },
-                        border = BorderStroke(1.dp, BillZenBorder),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "Configurar huella o PIN en Ajustes",
-                            color = BillZenTextPrimary,
-                            fontSize = 13.sp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    TextButton(onClick = onUnlockSuccess) {
-                        Text(
-                            text = "Continuar con acceso de respaldo (Dispositivo sin bloqueo)",
-                            color = BillZenGold,
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            }
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = errorMessage!!,
+                color = BillZenError,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
         }
 
+        Spacer(modifier = Modifier.height(22.dp))
+
         Text(
-            text = "Política de Sesión Única y Bloqueo en Segundo Plano • BillZen ERP",
+            text = "O ingresa con tu huella",
             color = BillZenTextSecondary,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            fontSize = 12.sp
         )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FingerprintCircleButton(onClick = triggerVerification)
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Button(
+            onClick = triggerVerification,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BillZenEmerald,
+                contentColor = BillZenTextPrimary
+            ),
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text(
+                text = "Ingresar",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        TextButton(onClick = onScanQrClick) {
+            Text(
+                text = "Escanear código QR",
+                color = BillZenEmerald,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
-/**
- * Iconos geométricos minimalistas y monocromáticos dibujados en Canvas para la barra de navegación.
- * Trazos limpios de 1.8.dp con StrokeCap.Round y tamaño 20.dp (cero emojis).
- */
+@Composable
+private fun FingerprintCircleButton(onClick: () -> Unit) {
+    Surface(
+        color = BillZenWhiteCard,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, BillZenLightBorder),
+        modifier = Modifier
+            .size(48.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Canvas(modifier = Modifier.size(22.dp)) {
+                val stroke = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+                drawArc(
+                    color = BillZenEmerald,
+                    startAngle = 200f,
+                    sweepAngle = 140f,
+                    useCenter = false,
+                    style = stroke
+                )
+                drawArc(
+                    color = BillZenEmerald,
+                    startAngle = 190f,
+                    sweepAngle = 160f,
+                    useCenter = false,
+                    topLeft = Offset(size.width * 0.18f, size.height * 0.18f),
+                    size = Size(size.width * 0.64f, size.height * 0.64f),
+                    style = stroke
+                )
+                drawLine(
+                    color = BillZenEmerald,
+                    start = Offset(size.width * 0.50f, size.height * 0.42f),
+                    end = Offset(size.width * 0.50f, size.height * 0.82f),
+                    strokeWidth = 1.8.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ErpNavIcon(
     section: ErpSection,
@@ -740,7 +676,6 @@ fun ErpNavIcon(
 
         when (section) {
             ErpSection.DASHBOARD -> {
-                // Gráfico ejecutivo minimalista de 3 barras verticales y línea base
                 drawLine(
                     color = color,
                     start = Offset(w * 0.12f, h * 0.86f),
@@ -772,7 +707,6 @@ fun ErpNavIcon(
             }
 
             ErpSection.ACCOUNTING -> {
-                // Documento / libro contable con 2 líneas horizontales internas
                 val docLeft = w * 0.18f
                 val docTop = h * 0.12f
                 val docWidth = w * 0.64f
@@ -801,7 +735,6 @@ fun ErpNavIcon(
             }
 
             ErpSection.TOKEN_2FA -> {
-                // Escudo geométrico monocromático de seguridad
                 val shieldPath = Path().apply {
                     moveTo(w * 0.50f, h * 0.10f)
                     lineTo(w * 0.84f, h * 0.24f)
@@ -836,30 +769,157 @@ fun ErpNavIcon(
     }
 }
 
-/**
- * Pantalla inicial que ve el cliente recién abre la aplicación.
- * Solicita escanear el código QR de BillzenERP de escritorio para desbloquear Billzen móvil.
- */
 @Composable
 fun InitialQrOnboardingScreen(
     onScanQrClick: () -> Unit,
-    onManualLinkClick: () -> Unit,
+    onSaveManualAccount: (TotpAccount) -> Unit = {},
     onLoadDemoClick: () -> Unit
 ) {
+    var nitInput by remember { mutableStateOf("") }
+    var secretInput by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val pillColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = BillZenDark,
+        unfocusedTextColor = BillZenDark,
+        focusedContainerColor = BillZenWhiteCard,
+        unfocusedContainerColor = BillZenWhiteCard,
+        focusedBorderColor = BillZenEmerald,
+        unfocusedBorderColor = BillZenLightBorder,
+        focusedPlaceholderColor = BillZenTextSecondary,
+        unfocusedPlaceholderColor = BillZenTextSecondary
+    )
+
+    val tryManualConnect: () -> Boolean = {
+        val trimmedSecret = secretInput.trim()
+        if (trimmedSecret.isEmpty() && nitInput.isBlank()) {
+            false
+        } else {
+            try {
+                val account = if (trimmedSecret.startsWith("otpauth://", ignoreCase = true)) {
+                    OtpAuthParser.parse(trimmedSecret)
+                } else {
+                    require(nitInput.isNotBlank())
+                    require(Base32.isValid(trimmedSecret))
+                    TotpAccount(
+                        nit = nitInput.trim(),
+                        companyName = "Empresa BillZen",
+                        secret = trimmedSecret.uppercase().replace(" ", "").replace("-", "")
+                    )
+                }
+                onSaveManualAccount(account)
+                true
+            } catch (_: IllegalArgumentException) {
+                errorMessage = "Revisa el NIT y la clave ingresados."
+                true
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp)
+            .padding(horizontal = 28.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        BillZenLogoHeader()
+        BillZenLogoHeader(centered = true, fontSizeSp = 34)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Conecta tu empresa",
+            color = BillZenTextSecondary,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        OutlinedTextField(
+            value = nitInput,
+            onValueChange = {
+                nitInput = it
+                errorMessage = null
+            },
+            placeholder = { Text("NIT de la empresa", fontSize = 14.sp) },
+            singleLine = true,
+            shape = RoundedCornerShape(28.dp),
+            colors = pillColors,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = secretInput,
+            onValueChange = {
+                secretInput = it
+                errorMessage = null
+            },
+            placeholder = { Text("Contraseña", fontSize = 14.sp) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            shape = RoundedCornerShape(28.dp),
+            colors = pillColors,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+        )
+
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = errorMessage!!,
+                color = BillZenError,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Text(
+            text = "O ingresa con tu huella",
+            color = BillZenTextSecondary,
+            fontSize = 12.sp
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FingerprintCircleButton(onClick = { if (!tryManualConnect()) onScanQrClick() })
 
         Spacer(modifier = Modifier.height(28.dp))
 
-        EmptyAccountsCard(
-            onScanQrClick = onScanQrClick,
-            onManualLinkClick = onManualLinkClick,
-            onLoadDemoClick = onLoadDemoClick
-        )
+        Button(
+            onClick = { if (!tryManualConnect()) onScanQrClick() },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BillZenEmerald,
+                contentColor = BillZenTextPrimary
+            ),
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text(
+                text = if (nitInput.isNotBlank() && secretInput.isNotBlank()) "Ingresar" else "Escanear código QR",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        TextButton(onClick = onLoadDemoClick) {
+            Text(
+                text = "Ver demostración",
+                color = BillZenTextSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
@@ -955,9 +1015,13 @@ fun SecurityTokenSectionScreen(
 }
 
 @Composable
-fun BillZenLogoHeader() {
+fun BillZenLogoHeader(
+    centered: Boolean = false,
+    fontSizeSp: Int = 28
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -982,89 +1046,8 @@ fun BillZenLogoHeader() {
                     append("Zen")
                 }
             },
-            fontSize = 28.sp
+            fontSize = fontSizeSp.sp
         )
-    }
-}
-@Composable
-fun EmptyAccountsCard(
-    onScanQrClick: () -> Unit = {},
-    onManualLinkClick: () -> Unit = {},
-    onLoadDemoClick: () -> Unit = {}
-) {
-    Surface(
-        color = BillZenCard,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, BillZenBorder),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Conecta tu empresa con BillZen ERP",
-                color = BillZenTextPrimary,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = "Escanea el código QR que aparece en BillZen ERP para conectar tu empresa.",
-                color = BillZenTextPrimary.copy(alpha = 0.78f),
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Button(
-                onClick = onScanQrClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BillZenEmerald,
-                    contentColor = BillZenTextPrimary
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Text(
-                    text = "Escanear QR de vinculación",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            OutlinedButton(
-                onClick = onManualLinkClick,
-                border = BorderStroke(1.dp, BillZenBorder),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Ingresar clave manualmente",
-                    color = BillZenTextPrimary,
-                    fontSize = 13.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            TextButton(onClick = onLoadDemoClick) {
-                Text(
-                    text = "Ver demostración",
-                    color = BillZenGold,
-                    fontSize = 12.sp
-                )
-            }
-        }
     }
 }
 
@@ -1441,12 +1424,6 @@ fun AdminQrLoginDialog(
 
 private const val BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
-/**
- * `TotpAccount.secret` debe ser Base32 válido porque la pestaña "Autenticador" lo usa en
- * `TotpGenerator`. El paquete QR de BillZen.exe no trae semilla TOTP, así que se deriva un valor
- * Base32 determinista (máx. 32 caracteres) del `pairing_token` solo para persistir la empresa
- * vinculada sin romper esa pestaña. No es una credencial de acceso al servidor.
- */
 private fun deriveLocalSecret(pairingToken: String): String {
     val builder = StringBuilder()
     var buffer = 0

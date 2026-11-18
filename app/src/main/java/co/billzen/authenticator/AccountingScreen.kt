@@ -35,7 +35,6 @@ import co.billzen.authenticator.ui.theme.BillZenLightBorder
 import co.billzen.authenticator.ui.theme.BillZenTextSecondary
 import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 
-/** Máximo de eventos de la bitácora visibles para no saturar la pantalla. */
 private const val MAX_VISIBLE_SECURITY_LOGS = 10
 
 @Composable
@@ -72,8 +71,6 @@ fun AccountingScreen(
         }
 
         item {
-            // En modo conectado, accountingSummary se alimenta con utilidad neta y costo de ventas
-            // del día; las etiquetas se ajustan para no mostrar conceptos contables erróneos.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -203,9 +200,6 @@ private fun AccountingSummaryCard(
     }
 }
 
-/**
- * Tarjeta destacada (borde ámbar) con los productos cuyo stock llegó al mínimo configurado.
- */
 @Composable
 private fun LowStockAlertsCard(alerts: List<LowStockAlertItem>) {
     Surface(
@@ -422,10 +416,6 @@ private fun SecurityLogCard(logs: List<SecurityAuditLogItem>) {
     }
 }
 
-/**
- * Color del badge según el tipo de movimiento: VENTA esmeralda, ENTRADA dorado,
- * ANULACION rojo; cualquier otro tipo usa ámbar como color neutro de aviso.
- */
 private fun movementTypeColor(tipo: String): Color {
     val normalized = tipo.trim().uppercase()
     return when {
@@ -436,7 +426,6 @@ private fun movementTypeColor(tipo: String): Color {
     }
 }
 
-/** Muestra enteros sin decimales y fracciones con hasta 2 decimales. */
 private fun formatQuantity(value: Double): String {
     return if (value % 1.0 == 0.0) {
         value.toLong().toString()
@@ -478,7 +467,6 @@ private fun ExpenseRowCard(record: ExpenseRecord) {
                     )
                 }
 
-                // Etiqueta de Estado (PAGADO en verde / PENDIENTE en rojo)
                 Surface(
                     color = badgeBgColor,
                     shape = RoundedCornerShape(8.dp)

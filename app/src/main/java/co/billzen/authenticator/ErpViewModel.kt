@@ -48,7 +48,7 @@ data class CategorySaleSlice(
 data class TopProductRank(
     val productName: String,
     val unitsSold: Int,
-    val relativeProgress: Float, // 0.0f .. 1.0f respecto al producto #1
+    val relativeProgress: Float,
     val formattedRevenue: String
 )
 
@@ -176,11 +176,6 @@ class ErpViewModel : ViewModel() {
         _uiState.update { it.copy(syncErrorMessage = null) }
     }
 
-    /**
-     * Autentica al Administrador contra `POST /api/movil/login` en `BillZen.exe` usando el paquete QR
-     * escaneado (`QrPairingPackage`), almacena el `session_token` y sincroniza inmediatamente
-     * la auditoría del día (`GET /api/movil/auditoria-dia`) en `Dispatchers.IO`.
-     */
     fun loginWithQrPackage(
         pkg: QrPairingPackage,
         username: String,
@@ -268,10 +263,6 @@ class ErpViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Descarga y actualiza en tiempo real el snapshot `GET /api/movil/auditoria-dia` desde `BillZen.exe`
-     * ejecutándose en `Dispatchers.IO` y formateando todos los KPIs a pesos colombianos (`$ X.XXX.XXX`).
-     */
     fun refreshDailyAudit(
         baseUrl: String? = null,
         fallbackUrl: String? = null,
@@ -364,10 +355,6 @@ class ErpViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Aplica un `DailyAuditSnapshot` al `ErpUiState`, convirtiendo automáticamente `kpis_dia`
-     * al formato de pesos colombianos (`$ X.XXX.XXX`) para alimentar `DashboardScreen` y `AccountingScreen`.
-     */
     fun applyDailyAuditSnapshot(snapshot: DailyAuditSnapshot) {
         val kpis = snapshot.kpisDia
         val formattedTotalVendido = MobileAuditClient.formatCopCurrency(kpis.totalVendidoHoy)

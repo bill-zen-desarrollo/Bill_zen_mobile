@@ -12,10 +12,6 @@ import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToLong
 
-/**
- * Payload decodificado del código QR de vinculación generado por `BillZen.exe`
- * (`logica/mobile_server.py` -> `generar_paquete_qr_emparejamiento`).
- */
 data class QrPairingPackage(
     val nit: String,
     val empresa: String,
@@ -23,21 +19,12 @@ data class QrPairingPackage(
     val localUrl: String,
     val pairingToken: String
 ) {
-    /**
-     * Indica si `remoteUrl` corresponde a un túnel remoto real (ej. `*.trycloudflare.com`)
-     * y no al placeholder de descarga (`https://bill-zen-users.vercel.app/#descargar`).
-     */
     val hasValidRemoteEndpoint: Boolean
         get() = MobileAuditClient.isValidApiEndpoint(remoteUrl)
 
     val hasValidLocalEndpoint: Boolean
         get() = MobileAuditClient.isValidApiEndpoint(localUrl)
 
-    /**
-     * Ordena las URLs candidatas para Smart Routing:
-     * Prioriza el túnel HTTPS (`.trycloudflare.com` o endpoint remoto válido) y deja `local_url`
-     * como fallback automático en LAN, o usa `local_url` directamente si el túnel no está activo.
-     */
     fun candidateBaseUrls(): List<String> {
         val candidates = mutableListOf<String>()
         if (hasValidRemoteEndpoint) {
@@ -53,9 +40,6 @@ data class QrPairingPackage(
     }
 }
 
-/**
- * Datos del usuario Administrador autenticado en `BillZen.exe`.
- */
 data class AuthenticatedAdminUser(
     val idUsuario: Int,
     val username: String,
@@ -63,11 +47,6 @@ data class AuthenticatedAdminUser(
     val idRol: Int
 )
 
-/**
- * Resultado tipado del login de Administrador (`POST /api/movil/login`).
- * Soporta tanto evaluación exhaustiva con `when (result)` (`Success` / `Failure`)
- * como lectura directa de propiedades (`result.ok`, `result.sessionToken`, `result.errorMessage`).
- */
 sealed class MobileLoginResult(
     open val ok: Boolean,
     open val sessionToken: String?,
@@ -119,9 +98,6 @@ sealed class MobileLoginResult(
     )
 }
 
-/**
- * KPIs financieros del día reportados por `GET /api/movil/auditoria-dia`.
- */
 data class DailyKpisSnapshot(
     val fecha: String,
     val totalVendidoHoy: Double,
@@ -135,9 +111,6 @@ data class DailyKpisSnapshot(
     val utilidadNetaHoy: Double
 )
 
-/**
- * Resumen de facturación diaria por cajero (`ventas_por_cajero`).
- */
 data class CashierSaleSummary(
     val username: String,
     val usuario: String,
@@ -151,9 +124,6 @@ data class CashierSaleSummary(
         get() = MobileAuditClient.formatCopCurrency(montoTotal)
 }
 
-/**
- * Registro individual de movimiento de inventario del día (`ultimos_movimientos`).
- */
 data class StockMovementItem(
     val idMovimiento: Int,
     val fecha: String,
@@ -166,9 +136,6 @@ data class StockMovementItem(
     val usuario: String
 )
 
-/**
- * Alerta de producto con inventario en o por debajo del mínimo (`alertas_stock_bajo`).
- */
 data class LowStockAlertItem(
     val idProducto: Int,
     val codigo: String,
@@ -177,9 +144,6 @@ data class LowStockAlertItem(
     val stockMinimo: Double
 )
 
-/**
- * Evento registrado en la bitácora de seguridad del ERP (`bitacora_seguridad`).
- */
 data class SecurityAuditLogItem(
     val idAuditoria: Int,
     val fecha: String,
@@ -188,9 +152,6 @@ data class SecurityAuditLogItem(
     val detalle: String
 )
 
-/**
- * Snapshot completo de auditoría en solo lectura (`GET /api/movil/auditoria-dia`).
- */
 data class DailyAuditSnapshot(
     val ok: Boolean,
     val modoConexion: String,
@@ -217,22 +178,12 @@ data class DailyAuditSnapshot(
     val utilidadNetaHoy: Double get() = kpisDia.utilidadNetaHoy
 }
 
-/**
- * Cliente HTTP nativo para conectar `Bill_zen_mobile` con el micro-servidor de `BillZen.exe`
- * (`logica/mobile_server.py`) mediante Cloudflare Tunnel (`*.trycloudflare.com`) o red local LAN (`:8765`).
- */
 object MobileAuditClient {
 
     private const val CONNECT_TIMEOUT_MS = 7_000
     private const val READ_TIMEOUT_MS = 10_000
     private const val DOWNLOAD_PLACEHOLDER_FRAGMENT = "vercel.app/#descargar"
 
-    /**
-     * Parsea el JSON de 5 campos generado por `generar_paquete_qr_emparejamiento` en `BillZen.exe`
-     * y valida que contenga `pairing_token` y al menos una URL válida (`remote_url` o `local_url`).
-     *
-     * @throws IllegalArgumentException si el contenido no es un JSON válido de emparejamiento BillZen.
-     */
     fun parseQrPayload(rawQr: String): QrPairingPackage {
         val trimmed = rawQr.trim()
         require(trimmed.startsWith("{") && trimmed.endsWith("}")) {
@@ -270,12 +221,6 @@ object MobileAuditClient {
         )
     }
 
-    /**
-     * Ejecuta `POST /api/movil/login` con Smart Routing entre el túnel HTTPS Cloudflare y la IP local LAN.
-     * - Si `remote_url` es un túnel `.trycloudflare.com` (o endpoint válido distinto del placeholder de descarga),
-     *   intenta primero `remote_url` y, ante fallo de red o túnel caído, conmuta automáticamente a `local_url`.
-     * - Si el servidor responde `400`, `401` o `403`, devuelve de inmediato el mensaje exacto del backend.
-     */
     fun loginAdmin(
         pkg: QrPairingPackage,
         username: String,
@@ -345,7 +290,6 @@ object MobileAuditClient {
                     )
                 }
 
-                // Si el servidor ERP respondió explícitamente con 400, 401 o 403, respetar su rechazo de seguridad
                 if (response.statusCode in listOf(400, 401, 403)) {
                     val serverError = bodyJson?.optString("error", "")?.trim().orEmpty()
                     val detailMessage = serverError.ifBlank {
@@ -361,7 +305,6 @@ object MobileAuditClient {
                     )
                 }
 
-                // Si el túnel devolvió 404/502/503/504 y existe otra URL candidata (LAN), probar el siguiente canal
                 val serverMsg = bodyJson?.optString("error", "")?.trim().orEmpty()
                 lastNetworkError = if (serverMsg.isNotBlank()) {
                     serverMsg
@@ -385,10 +328,6 @@ object MobileAuditClient {
         )
     }
 
-    /**
-     * Consulta `GET /api/movil/auditoria-dia` enviando `Authorization: Bearer <session_token>`.
-     * Si `baseUrl` falla por red o caída de túnel y existe `fallbackUrl`, reintenta automáticamente por `fallbackUrl`.
-     */
     fun fetchDailyAudit(
         baseUrl: String,
         fallbackUrl: String? = null,
@@ -458,9 +397,6 @@ object MobileAuditClient {
         return Result.failure(lastException)
     }
 
-    /**
-     * Transforma la respuesta JSON de `/api/movil/auditoria-dia` en el grafo inmutable `DailyAuditSnapshot`.
-     */
     internal fun parseDailyAuditSnapshot(
         json: JSONObject,
         activeBaseUrl: String
@@ -565,9 +501,6 @@ object MobileAuditClient {
         )
     }
 
-    /**
-     * Formatea cualquier valor numérico al formato de pesos colombianos (`$ X.XXX.XXX`).
-     */
     fun formatCopCurrency(amount: Double): String {
         val rounded = if (amount.isNaN() || amount.isInfinite()) 0L else amount.roundToLong()
         val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("es-CO")).apply {

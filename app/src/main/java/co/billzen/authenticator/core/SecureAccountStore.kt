@@ -12,10 +12,6 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Sesión móvil de Administrador persistida y cifrada con AES-256-GCM en `AndroidKeyStore`.
- * Respeta el tiempo de vida máximo emitido por `BillZen.exe` (`TTL_SESION_MOVIL_SEG = 43200`, 12 horas).
- */
 data class PersistedMobileSession(
     val nit: String,
     val companyName: String,

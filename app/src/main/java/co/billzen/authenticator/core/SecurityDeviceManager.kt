@@ -15,20 +15,11 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Resultado tipado de la validación de sesión única del dispositivo contra el backend de BillZen.
- */
 sealed class DeviceBindingValidationResult {
-    /** El servidor confirmó que este UUID es el único dispositivo autorizado para el NIT. */
     data class Authorized(val deviceUuid: String) : DeviceBindingValidationResult()
 
-    /**
-     * HTTP 403 Forbidden: El servidor rechazó este UUID porque el dueño tiene otra sesión
-     * vinculada en un dispositivo distinto.
-     */
     data class RejectedForbidden(val serverMessage: String) : DeviceBindingValidationResult()
 
-    /** Error de red o servidor no disponible temporalmente. */
     data class NetworkError(val reason: String) : DeviceBindingValidationResult()
 }
 
@@ -43,7 +34,6 @@ class SecurityDeviceManager(context: Context) {
             try {
                 return decrypt(existingEncrypted)
             } catch (_: Exception) {
-                // Si el Keystore fue invalidado por restablecimiento de fábrica, se regenera
             }
         }
 
@@ -93,7 +83,6 @@ class SecurityDeviceManager(context: Context) {
                     DeviceBindingValidationResult.Authorized(deviceUuid)
                 }
                 HttpURLConnection.HTTP_FORBIDDEN -> {
-                    // HTTP 403: Existe otra sesión activa vinculada a un UUID distinto
                     DeviceBindingValidationResult.RejectedForbidden(
                         "Sesión bloqueada (HTTP 403): Este NIT ya tiene una sesión activa en otro dispositivo autorizado."
                     )

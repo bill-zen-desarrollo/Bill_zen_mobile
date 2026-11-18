@@ -65,13 +65,6 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 
-/**
- * Pantalla modal de escaneo de código QR en vivo usando CameraX + Google ML Kit.
- *
- * - Solicita el permiso de cámara en tiempo de ejecución si aún no ha sido concedido.
- * - Analiza los fotogramas de la cámara localmente en el dispositivo (100% offline).
- * - Cuando detecta un QR válido (`otpauth://...`), invoca [onQrCodeDetected] una sola vez.
- */
 @Composable
 fun QrScannerDialog(
     onDismiss: () -> Unit,
@@ -294,7 +287,6 @@ private fun CameraQrPreview(
                             imageAnalysis
                         )
                     } catch (_: Exception) {
-                        // En caso de que el dispositivo no tenga cámara trasera disponible
                     }
                 }, ContextCompat.getMainExecutor(ctx))
 
@@ -303,7 +295,6 @@ private fun CameraQrPreview(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Marco guía visual en color verde menta para encuadrar el QR
         Box(
             modifier = Modifier
                 .size(210.dp)

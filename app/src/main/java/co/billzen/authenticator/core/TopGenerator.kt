@@ -46,7 +46,6 @@ object TotpGenerator {
                 ((hash[offset + 2].toInt() and 0xFF) shl 8) or
                 (hash[offset + 3].toInt() and 0xFF)
 
-
         val modulo = 10.0.pow(digits).toInt()
         val otp = binary % modulo
         return otp.toString().padStart(digits, '0')

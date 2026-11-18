@@ -50,15 +50,6 @@ import co.billzen.authenticator.ui.theme.BillZenLightBorder
 import co.billzen.authenticator.ui.theme.BillZenTextSecondary
 import co.billzen.authenticator.ui.theme.BillZenWhiteCard
 
-/**
- * Pantalla principal "Dashboard" del BillZen Mobile ERP.
- *
- * Incluye:
- * 1. TopBar con el logo corporativo "BillZen" y saludo personalizado "Hola, {nombre}".
- * 2. Carrusel horizontal con las 4 tarjetas de KPIs financieros e indicador de subida/bajada.
- * 3. Gráfico circular (Donut Chart) para "Ventas por categoría".
- * 4. Gráfico de barras horizontales para "Productos más vendidos".
- */
 @Composable
 fun DashboardScreen(
     uiState: ErpUiState,
@@ -95,7 +86,6 @@ fun DashboardScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Fila scrollable horizontalmente con las 4 tarjetas de KPIs
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
@@ -110,21 +100,16 @@ fun DashboardScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         if (uiState.cashierSales.isNotEmpty()) {
-            // Datos reales de BillZen.exe: ventas del día agrupadas por cajero
             CashierSalesCard(sales = uiState.cashierSales)
             Spacer(modifier = Modifier.height(18.dp))
         }
 
         if (!uiState.isLiveConnected) {
-            // Gráfico 1 (solo demostración): Donut Chart - Ventas por Categoría.
-            // En modo conectado se omite porque su total central es estático y las porciones
-            // provienen de los cajeros, ya representados en CashierSalesCard.
             CategoryDonutChartCard(slices = uiState.categorySales)
             Spacer(modifier = Modifier.height(18.dp))
         }
 
         if (showProductsChart) {
-            // Gráfico 2: Barras Horizontales - Productos
             TopProductsBarChartCard(
                 products = uiState.topProducts,
                 isLive = uiState.isLiveConnected
@@ -135,10 +120,6 @@ fun DashboardScreen(
     }
 }
 
-/**
- * Tarjeta ejecutiva "Ventas por cajero hoy" alimentada por `ventas_por_cajero` de BillZen.exe.
- * La barra de cada cajero es proporcional al monto del cajero con mayor facturación.
- */
 @Composable
 private fun CashierSalesCard(sales: List<CashierSaleSummary>) {
     val maxAmount = sales.maxOfOrNull { it.montoTotal }?.coerceAtLeast(1.0) ?: 1.0
@@ -263,7 +244,6 @@ private fun DashboardTopBar(
                 fontSize = 28.sp
             )
 
-            // Insignia ejecutiva compacta en una sola línea horizontal
             Surface(
                 color = BillZenEmerald.copy(alpha = 0.12f),
                 shape = RoundedCornerShape(20.dp),
@@ -294,7 +274,6 @@ private fun DashboardTopBar(
         )
 
         if (isLiveConnected) {
-            // Se omite el prefijo técnico (p. ej. "READ_ONLY • ") y se deja solo el canal de conexión.
             val channelLabel = connectionModeLabel.substringAfter("• ").trim()
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -439,7 +418,7 @@ private fun CategoryDonutChartCard(slices: List<CategorySaleSlice>) {
                             drawArc(
                                 color = slice.color,
                                 startAngle = startAngle,
-                                sweepAngle = sweepAngle - 3f, // Pequeña separación visual entre arcos
+                                sweepAngle = sweepAngle - 3f,
                                 useCenter = false,
                                 style = Stroke(width = 24.dp.toPx(), cap = StrokeCap.Butt)
                             )
@@ -556,7 +535,6 @@ private fun TopProductsBarChartCard(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        // Barra horizontal proporcional
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

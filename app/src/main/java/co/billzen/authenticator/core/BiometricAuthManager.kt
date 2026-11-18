@@ -11,36 +11,18 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.provider.Settings
 
-/**
- * Estado tipado de capacidad biométrica o bloqueo seguro del dispositivo.
- */
 enum class BiometricCapabilityStatus {
-    /** El dispositivo cuenta con bloqueo seguro (PIN/Patrón) y/o biometría activa. */
     READY,
 
-    /** El dispositivo o emulador no tiene huella digital, rostro ni PIN configurado. */
     NONE_ENROLLED,
 
-    /** El dispositivo o emulador carece de hardware biométrico y de bloqueo activo. */
     NO_HARDWARE,
 
-    /** El subsistema biométrico no está disponible temporalmente. */
     UNAVAILABLE
 }
 
-/**
- * Gestor de Autenticación Biométrica 100 % Nativo del SDK de Android para BillZen Mobile ERP.
- *
- * Utiliza exclusivamente las APIs nativas del framework (`android.hardware.biometrics.BiometricPrompt`,
- * `android.hardware.biometrics.BiometricManager` y `android.app.KeyguardManager`) sobre `android.app.Activity`
- * (`ComponentActivity`), eliminando cualquier dependencia de `androidx.biometric` o `FragmentActivity`.
- */
 class BiometricAuthManager(private val activity: Activity) {
 
-    /**
-     * Evalúa si el teléfono o emulador tiene bloqueo de pantalla (`KeyguardManager.isDeviceSecure`)
-     * y sensores biométricos configurados antes de invocar `BiometricPrompt`.
-     */
     fun checkCapability(): BiometricCapabilityStatus {
         val keyguardManager = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         if (keyguardManager?.isDeviceSecure != true) {
@@ -76,11 +58,6 @@ class BiometricAuthManager(private val activity: Activity) {
         return BiometricCapabilityStatus.READY
     }
 
-    /**
-     * Lanza el diálogo biométrico nativo del sistema (`android.hardware.biometrics.BiometricPrompt`)
-     * únicamente si el dispositivo tiene seguridad configurada. Si `isDeviceSecure == false`,
-     * retorna de inmediato al estado de respaldo sin bloquear el emulador.
-     */
     @SuppressLint("MissingPermission")
     fun authenticate(
         onSuccess: () -> Unit,
@@ -198,10 +175,6 @@ class BiometricAuthManager(private val activity: Activity) {
         }
     }
 
-    /**
-     * Abre la pantalla de configuración de seguridad/biometría de Android para que el Administrador
-     * pueda registrar su huella digital o PIN.
-     */
     fun openSecuritySettings() {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Intent(Settings.ACTION_BIOMETRIC_ENROLL).apply {
@@ -222,7 +195,6 @@ class BiometricAuthManager(private val activity: Activity) {
             try {
                 activity.startActivity(Intent(Settings.ACTION_SETTINGS))
             } catch (_: Exception) {
-                // Ignorado si el entorno restringe abrir Ajustes
             }
         }
     }
