@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -20,8 +22,28 @@ android {
         base.archivesName.set("billzenERP")
     }
 
+    signingConfigs {
+        create("release") {
+            // Credenciales leídas de keystore/keystore.properties (ignorado por git)
+            val signingProps = Properties()
+            val signingFile = rootProject.file("keystore/keystore.properties")
+            if (signingFile.exists()) {
+                signingFile.inputStream().use { signingProps.load(it) }
+                storeFile = rootProject.file(signingProps.getProperty("storeFile"))
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             optimization {
                 enable = true
                 packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
